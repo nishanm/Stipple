@@ -12,6 +12,14 @@ device without a capture of that device first.
 
 ### Added
 
+- **A glucose app.** Six faces for a continuous glucose monitor reading - a
+  hero value with direction, with delta, with three hours of history, a
+  bedside clock-and-value, a full-panel graph, and an explicit no-data face -
+  reproduced byte for byte from the `nightscout-pixbar` reference renderer's
+  golden corpus, and held to it by the test suite. Draws a demo reading for
+  now; the Nightscout data source, alarm and settings follow in later stages.
+  See `docs/development/glucose-app.md`.
+
 - **`https` works.** Stipple carries its own TLS, so a script can fetch from
   an API that requires it. The certificate chain is verified against trusted
   roots, the certificate must name the host asked for, and it must be valid

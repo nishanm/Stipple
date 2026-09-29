@@ -21,6 +21,7 @@ add_executable(stipple_tests
     test_frame_scheduler.cpp
     test_host.cpp
     test_clock.cpp
+    test_glucose.cpp
     test_icons.cpp
     test_web.cpp
     test_mqtt.cpp

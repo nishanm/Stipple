@@ -201,6 +201,8 @@ add_library(stipple_core
     src/asset/IconStore.cpp
     src/apps/BatteryApp.cpp
     src/apps/ClockApp.cpp
+    src/apps/GlucoseApp.cpp
+    src/apps/GlucoseFont.cpp
     src/apps/StopwatchApp.cpp
     src/apps/VisualizerApp.cpp
     src/apps/Unavailable.cpp

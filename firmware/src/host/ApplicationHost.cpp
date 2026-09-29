@@ -4,6 +4,7 @@
 #include "stipple/api/BasicAuth.h"
 
 #include "stipple/apps/BatteryApp.h"
+#include "stipple/apps/GlucoseApp.h"
 #include "stipple/apps/StopwatchApp.h"
 #include "stipple/render/Overlay.h"
 #include "stipple/apps/Unavailable.h"
@@ -271,6 +272,21 @@ void ApplicationHost::installBuiltins() {
         battery.durationSeconds = 0;
         registry_.put(std::move(battery));
     }
+
+    // Needs no hardware to check for. Until a data source is wired it shows a
+    // demo reading, which is honest about being a demo only in the sense that
+    // nothing here claims otherwise yet - the source is the next stage.
+    app::App glucose;
+    glucose.id = std::string(kGlucoseAppId);
+    glucose.name = "Glucose";
+    glucose.source = app::AppSource::System;
+    glucose.builtin = app::Builtin::Glucose;
+    glucose.durationSeconds = 0;
+    registry_.put(std::move(glucose));
+
+    const platform::ISystemClock& systemClock = platform_.clock();
+    glucose_ = apps::demoGlucoseReading(systemClock.wallClockValid() ? systemClock.unixSeconds()
+                                                                     : 0);
 }
 
 void ApplicationHost::loadIcons() {
@@ -1584,6 +1600,11 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
                                            lastClockMillis_, nowMillis)) {
                         scheduler_.invalidate();
                     }
+                } else if (active->builtin == app::Builtin::Glucose) {
+                    // Nothing on a glucose face moves faster than the minute.
+                    if (apps::glucoseChanged(lastClockMillis_, nowMillis)) {
+                        scheduler_.invalidate();
+                    }
                 } else if (refreshActiveScene() && scene_.animates()) {
                     scheduler_.invalidate();
                 }
@@ -1935,6 +1956,9 @@ void ApplicationHost::renderFrame(std::uint64_t nowMillis) {
         }
         case app::Builtin::Stopwatch:
             apps::renderStopwatch(canvas, stopwatch_, nowMillis, apps::StopwatchStyle{});
+            return;
+        case app::Builtin::Glucose:
+            apps::renderGlucose(canvas, glucose_, apps::GlucoseFace::Hero);
             return;
         case app::Builtin::TestPattern:
             demo::drawTestPattern(canvas, static_cast<int>(nowMillis / 33u));

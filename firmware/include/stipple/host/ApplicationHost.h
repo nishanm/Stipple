@@ -10,6 +10,7 @@
 #include "stipple/asset/IconStore.h"
 #include "stipple/script/IScriptRunner.h"
 #include "stipple/apps/ClockApp.h"
+#include "stipple/apps/GlucoseModel.h"
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/apps/SplashScreen.h"
 #include "stipple/config/Config.h"
@@ -109,6 +110,7 @@ public:
     static constexpr std::string_view kBatteryAppId = "battery";
     static constexpr std::string_view kVisualizerAppId = "visualizer";
     static constexpr std::string_view kStopwatchAppId = "stopwatch";
+    static constexpr std::string_view kGlucoseAppId = "glucose";
     static constexpr std::string_view kIconStateKey = "icons";
     static constexpr std::string_view kScriptStateKey = "scripts";
     static constexpr int kSceneTokens = 512;
@@ -417,6 +419,11 @@ private:
     /// while the carousel is showing something else. A stopwatch that reset
     /// itself every time the clock came round would be a toy.
     apps::Stopwatch stopwatch_;
+
+    /// The reading the glucose app draws. Owned here, like the stopwatch, so a
+    /// data source can update it whichever app is on screen. Until one is
+    /// wired it holds a demo reading built at startup.
+    apps::glucose::Reading glucose_;
 
     /// One-shot, taken by takeSetupRequest().
     bool setupRequested_ = false;

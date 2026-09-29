@@ -34,6 +34,10 @@ enum class Builtin : std::uint8_t {
     Visualizer,
     Stopwatch,
     TestPattern,
+    /// A glucose reading drawn in one of the glucose faces. Its content comes
+    /// from a data source rather than a scene, and its hero digit is taller
+    /// than the text engine allows, so it is code.
+    Glucose,
     /// Content is a Berry script, held in the ScriptStore under this app's id.
     ///
     /// The source is not in the App because an App is copied whenever the
