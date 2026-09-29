@@ -22,6 +22,8 @@ add_executable(stipple_tests
     test_host.cpp
     test_clock.cpp
     test_glucose.cpp
+    test_glucose_source.cpp
+    test_glucose_settings.cpp
     test_icons.cpp
     test_web.cpp
     test_mqtt.cpp
@@ -44,6 +46,7 @@ add_executable(stipple_tests
     test_wpa_commands.cpp
     test_basic_auth.cpp
     test_md5.cpp
+    test_sha1.cpp
     test_update_image.cpp
     test_script.cpp
     test_script_store.cpp

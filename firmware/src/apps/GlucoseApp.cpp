@@ -383,27 +383,5 @@ bool glucoseChanged(std::uint64_t previousMillis, std::uint64_t nowMillis) noexc
     return (nowMillis / 60000u) != (previousMillis / 60000u);
 }
 
-Reading demoGlucoseReading(std::int64_t now) noexcept {
-    Reading reading;
-    reading.sgv = 118;
-    reading.trend = Trend::Flat;
-    reading.hasDelta = true;
-    reading.delta = 2;
-    reading.minutesAgo = 3;
-    reading.hour = 14;
-    reading.minute = 32;
-    reading.now = now;
-    // Three hours on the five-minute cadence, drifting gently around the value,
-    // so the graph faces have something honest-looking to plot.
-    constexpr int kPoints = 36;
-    constexpr int kWobble[8] = {0, 3, -2, 5, -4, 2, -1, 4};
-    for (int i = 0; i < kPoints; ++i) {
-        const int ageMinutes = (kPoints - 1 - i) * 5 + reading.minutesAgo;
-        reading.pushSample({now - static_cast<std::int64_t>(ageMinutes) * 60,
-                            reading.sgv - 6 + kWobble[i % 8]});
-    }
-    return reading;
-}
-
 }  // namespace apps
 }  // namespace stipple

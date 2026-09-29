@@ -48,6 +48,15 @@ int clampPort(std::int64_t value) noexcept {
     return value > 65535 ? 65535 : static_cast<int>(value);
 }
 
+/// A glucose source is asked once a minute by default; under 30 s is hammering
+/// somebody's Nightscout, over 10 min is a reading that goes stale between asks.
+int clampPollSeconds(std::int64_t value) noexcept {
+    if (value < 30) {
+        return 30;
+    }
+    return value > 600 ? 600 : static_cast<int>(value);
+}
+
 /// MQTT allows up to 18 hours; anything under 5 seconds is a keepalive storm.
 int clampKeepAlive(std::int64_t value) noexcept {
     if (value < 5) {
@@ -250,6 +259,16 @@ std::string buildBody(const Config& config) {
     appendEscaped(body, config.visualizer.style);
     body += '}';
 
+    body += ",\"glucose\":{\"url\":";
+    appendEscaped(body, config.glucose.url);
+    body += ",\"apiSecretSha1\":";
+    appendEscaped(body, config.glucose.apiSecretSha1);
+    body += ",\"pollSeconds\":";
+    body += std::to_string(config.glucose.pollSeconds);
+    body += ",\"face\":";
+    appendEscaped(body, config.glucose.face);
+    body += '}';
+
     body += '}';
     return body;
 }
@@ -427,6 +446,13 @@ bool ConfigStore::deserialize(std::string_view payload,
 
     const json::Value visualizer = body["visualizer"];
     parsed.visualizer.style = visualizer["style"].toString(parsed.visualizer.style);
+
+    const json::Value glucose = body["glucose"];
+    parsed.glucose.url = glucose["url"].toString(parsed.glucose.url);
+    parsed.glucose.apiSecretSha1 = glucose["apiSecretSha1"].toString(parsed.glucose.apiSecretSha1);
+    parsed.glucose.pollSeconds =
+        clampPollSeconds(glucose["pollSeconds"].toInt(parsed.glucose.pollSeconds));
+    parsed.glucose.face = glucose["face"].toString(parsed.glucose.face);
 
     const json::Value clock = body["clock"];
     parsed.clock.twentyFourHour = clock["twentyFourHour"].toBool(parsed.clock.twentyFourHour);

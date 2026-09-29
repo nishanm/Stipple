@@ -67,9 +67,5 @@ void renderGlucose(Canvas& canvas, const glucose::Reading& reading, GlucoseFace 
 /// clock), so a static reading is redrawn once a minute, not once a frame.
 bool glucoseChanged(std::uint64_t previousMillis, std::uint64_t nowMillis) noexcept;
 
-/// A plausible in-range reading as of `now`, for a build with no data source
-/// yet. Content for the panel, not a fixture: the goldens have their own inputs.
-glucose::Reading demoGlucoseReading(std::int64_t now) noexcept;
-
 }  // namespace apps
 }  // namespace stipple

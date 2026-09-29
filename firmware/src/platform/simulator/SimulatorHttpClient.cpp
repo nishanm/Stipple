@@ -29,10 +29,12 @@ const SimulatorHttpClient::Route* SimulatorHttpClient::findRoute(
     return nullptr;
 }
 
-bool SimulatorHttpClient::begin(std::string_view url) {
+bool SimulatorHttpClient::begin(const HttpRequest& request) {
     if (stage_ == Stage::Running) {
         return false;
     }
+
+    const std::string_view url = request.url;
 
     // Parsed even though nothing here connects, so the simulator refuses the
     // same URLs the device would. A script that worked in the emulator and
@@ -44,9 +46,23 @@ bool SimulatorHttpClient::begin(std::string_view url) {
         failure_ = "bad url";
         return false;
     }
+    if (!net::http::headerIsSafe(request.headerName, request.headerValue)) {
+        stage_ = Stage::Failed;
+        failure_ = "bad header";
+        return false;
+    }
 
     ++requests_;
     asked_.emplace_back(url);
+    std::string header;
+    if (!request.headerName.empty()) {
+        header.append(request.headerName);
+        header += ": ";
+        header.append(request.headerValue);
+    }
+    askedHeaders_.push_back(std::move(header));
+    maxBodyBytes_ = request.maxBodyBytes;
+    truncated_ = false;
 
     const Route* route = findRoute(url);
     if (route == nullptr) {
@@ -94,7 +110,12 @@ void SimulatorHttpClient::poll(std::uint64_t nowMillis) {
     }
 
     status_ = pendingStatus_;
-    body_ = pendingBody_;
+    if (pendingBody_.size() > maxBodyBytes_) {
+        body_ = pendingBody_.substr(0, maxBodyBytes_);
+        truncated_ = true;
+    } else {
+        body_ = pendingBody_;
+    }
     failure_.clear();
     stage_ = Stage::Done;
 }

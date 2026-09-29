@@ -16,9 +16,24 @@ device without a capture of that device first.
   hero value with direction, with delta, with three hours of history, a
   bedside clock-and-value, a full-panel graph, and an explicit no-data face -
   reproduced byte for byte from the `nightscout-pixbar` reference renderer's
-  golden corpus, and held to it by the test suite. Draws a demo reading for
-  now; the Nightscout data source, alarm and settings follow in later stages.
-  See `docs/development/glucose-app.md`.
+  golden corpus, and held to it by the test suite. See
+  `docs/development/glucose-app.md`.
+- **The glucose app reads Nightscout itself.** Set the site's URL and API
+  secret under the app's settings and the device polls `entries.json` once a
+  minute, ages the reading honestly when the server stops answering, shows the
+  no-data face once it is twenty minutes old, and holds off for five minutes
+  (doubling to thirty) after a refused credential. The device keeps only the
+  secret's SHA-1 - the form Nightscout checks - and never returns it.
+- **Fetches can carry a header and ask for a larger body.** `IHttpClient::begin`
+  takes an `HttpRequest` with one optional header and a per-request body cap;
+  the kilobyte default is unchanged for scripts. The simulator now truncates at
+  the cap like the device does.
+
+### Fixed
+
+- **Two things fetching no longer fight over the one HTTP client.** The script
+  fetcher waits while another request is in flight instead of failing it, and
+  deleting a script no longer resets a fetch it did not start.
 
 - **`https` works.** Stipple carries its own TLS, so a script can fetch from
   an API that requires it. The certificate chain is verified against trusted

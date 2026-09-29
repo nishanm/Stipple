@@ -16,6 +16,12 @@ class AppRegistry;
 class Carousel;
 }  // namespace app
 
+namespace apps {
+namespace glucose {
+class NightscoutSource;
+}
+}  // namespace apps
+
 namespace notify {
 class NotificationQueue;
 }
@@ -99,6 +105,11 @@ struct ApiContext {
     /// Render pacing, for diagnostics. Null simply omits the section: a build
     /// that does not schedule frames has nothing truthful to say about them.
     const render::FrameScheduler* scheduler = nullptr;
+
+    /// The glucose app's data source, for diagnostics: counts, the last HTTP
+    /// status, the last failure. Never its URL and never its credential. Null
+    /// omits the section.
+    const apps::glucose::NightscoutSource* glucose = nullptr;
 };
 
 struct ApiOptions {

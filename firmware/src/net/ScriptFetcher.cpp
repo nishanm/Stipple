@@ -119,11 +119,15 @@ void ScriptFetcher::forget(std::string_view scriptId) {
     }
     if (write != feeds_.size()) {
         // Indices into the vector are about to move, so nothing may be left
-        // pointing into it.
+        // pointing into it. Only a request of ours is reset: when nothing is
+        // running the client may be carrying somebody else's fetch, and a
+        // script being deleted is no reason to abort it.
         feeds_.resize(write);
-        running_ = -1;
-        if (client_ != nullptr) {
-            client_->reset();
+        if (running_ >= 0) {
+            running_ = -1;
+            if (client_ != nullptr) {
+                client_->reset();
+            }
         }
     }
 }
@@ -218,6 +222,13 @@ void ScriptFetcher::start(std::uint64_t nowMillis) {
         }
     }
     if (best < 0) {
+        return;
+    }
+
+    // The client is shared with anything else on the device that fetches.
+    // Busy means somebody else's request is in flight; wait a tick rather
+    // than begin() on it, which would fail and then reset() their request.
+    if (client_->stage() != platform::IHttpClient::Stage::Idle) {
         return;
     }
 

@@ -15,9 +15,9 @@ same faces on a host and pushes them to the stock Ulanzi firmware. That
 renderer is the reference: the faces here are a port of its `faces.py`, and the
 test suite holds them **byte-identical** to its golden corpus.
 
-Stage 1 (this document) is faces only. The Nightscout data source, the
-urgent-low alarm, knob face switching with persistence, and the settings fields
-are later stages, each scoped on its own.
+Stage 1 was faces only; Stage 2 added the Nightscout source and its settings.
+The urgent-low alarm, knob face switching with persistence, and the rest of the
+settings page are later stages, each scoped on its own.
 
 ## Decisions
 
@@ -66,6 +66,62 @@ move a tie.
 (`kMaxHistory = 64`, enough for three hours of five-minute readings with room
 for a source that repeats readings). It lives in the host and is handed to the
 renderer by const reference; nothing on the frame path allocates.
+
+## Stage 2: the source
+
+`apps::glucose::NightscoutSource` (`GlucoseSource.h`) polls
+`<url>/api/v1/entries.json?count=38&find[type]=sgv` - three hours of
+five-minute readings plus two for the ones Dexcom Share repeats, the same
+request the reference makes - once a period, and rebuilds the reading from the
+samples after every fetch and on every minute. The parsing is a pure function,
+`parseEntries`, so it is tested without a client; the reference's own test
+fixture is used verbatim, so both implementations are held to one answer.
+
+### Decisions
+
+**The device stores the secret's SHA-1, never the secret.** Nightscout checks
+the `api-secret` header against the SHA-1 of the site secret, so the digest is
+the credential and the plaintext has no reason to exist on the device. The API
+hashes what it is given on receipt (`glucose.apiSecret`, write-only) and keeps
+`apiSecretSha1`; GET reports `apiSecretSet` and nothing else, diagnostics
+report neither the credential nor the URL. `core/Sha1.cpp` exists for this one
+job and is not a security primitive for anything new. Hashing happens on the
+device because the panel serves plain HTTP, where a browser has no
+`crypto.subtle`.
+
+**No compiled defaults.** This repository is public; a LAN address or a secret
+in the source would be published with it. Both arrive through the API.
+
+**One HTTP client, shared.** The platform offers a single `IHttpClient`, and
+`ScriptFetcher` used to assume it owned it - `start()` would `begin()` on a
+busy client, fail, and `reset()` whoever's request was in flight, and
+`forget()` reset the client whenever a script was deleted. Both now check.
+The rule for anything that fetches: begin only when the client is `Idle`,
+poll your own request, `reset()` after you collect it, and treat `Idle` while
+you believed you were running as "somebody reset it" rather than a failure.
+
+**Requests may carry a header and ask for a larger body.** `HttpRequest` adds
+one header as a name/value pair (checked as a token and for control
+characters, not scanned for line breaks) and a per-request body cap. The
+kilobyte default stands for scripts; the source asks for 32 KiB because real
+entries carry a dozen or more fields. The simulator truncates at the cap too,
+so the emulator cannot pass on a body the panel would never see. Diagnostics
+report `lastBodyBytes` so the cap can be revisited with a measurement.
+
+**Failures keep the samples.** A refused credential (401/403) holds the source
+off for five minutes, doubling to thirty, so a bad secret cannot ask somebody's
+server once a minute for ever. Everything else - no route, a timeout, a 500, a
+body that is not JSON, an empty list - is tried again next period. Either way
+the last samples stay and the reading is rebuilt with the new time, so it ages
+into stale rather than freezing on a number that is no longer true.
+
+**Nothing before the wall clock is set.** The device boots at 1970. A reading's
+age computed from that would be a lie in the safe-looking direction, so the
+source waits for SNTP and shows the no-data face until then.
+
+**Stale shows the no-data face.** Whatever face is chosen, a reading older
+than twenty minutes is drawn as the explicit no-data face (the reference's
+rule): a grey `---` on the hero face reads as a value that is merely dim.
 
 ## The golden gate
 

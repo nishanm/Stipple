@@ -63,8 +63,18 @@ public:
     /// The URLs asked for, in order.
     const std::vector<std::string>& asked() const noexcept { return asked_; }
 
+    /// The extra header sent with each request, `name: value`, or empty when
+    /// there was none. Parallel to `asked()`.
+    const std::vector<std::string>& askedHeaders() const noexcept { return askedHeaders_; }
+
+    /// Whether the last answer was cut at the request's body cap. The device
+    /// truncates, so the simulator does too - an emulator that returned a
+    /// whole document the panel would never see would be lying.
+    bool lastTruncated() const noexcept { return truncated_; }
+
     // IHttpClient
-    bool begin(std::string_view url) override;
+    using IHttpClient::begin;
+    bool begin(const HttpRequest& request) override;
     void poll(std::uint64_t nowMillis) override;
     Stage stage() const noexcept override { return stage_; }
     int status() const noexcept override { return status_; }
@@ -80,7 +90,10 @@ private:
     int defaultStatus_ = 0;
     std::string defaultBody_;
     std::vector<std::string> asked_;
+    std::vector<std::string> askedHeaders_;
     std::uint32_t requests_ = 0;
+    std::size_t maxBodyBytes_ = net::http::ResponseParser::kMaxBodyBytes;
+    bool truncated_ = false;
 
     Stage stage_ = Stage::Idle;
     std::uint64_t readyAtMillis_ = 0;

@@ -10,7 +10,7 @@
 #include "stipple/asset/IconStore.h"
 #include "stipple/script/IScriptRunner.h"
 #include "stipple/apps/ClockApp.h"
-#include "stipple/apps/GlucoseModel.h"
+#include "stipple/apps/GlucoseSource.h"
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/apps/SplashScreen.h"
 #include "stipple/config/Config.h"
@@ -420,10 +420,14 @@ private:
     /// itself every time the clock came round would be a toy.
     apps::Stopwatch stopwatch_;
 
-    /// The reading the glucose app draws. Owned here, like the stopwatch, so a
-    /// data source can update it whichever app is on screen. Until one is
-    /// wired it holds a demo reading built at startup.
-    apps::glucose::Reading glucose_;
+    /// The glucose app's data source. Owned here, like the stopwatch, so it
+    /// keeps polling whichever app is on screen: a reading that only updated
+    /// while it was being looked at would be stale every time the carousel
+    /// came round to it.
+    apps::glucose::NightscoutSource glucoseSource_;
+
+    /// The source revision last drawn, so a new reading forces a frame.
+    std::uint32_t lastGlucoseRevision_ = 0;
 
     /// One-shot, taken by takeSetupRequest().
     bool setupRequested_ = false;

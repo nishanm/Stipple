@@ -169,6 +169,33 @@ STIPPLE_TEST(HttpUrl, TheRequestOnlyNamesThePortWhenItIsNotTheDefault) {
     STIPPLE_CHECK(a.find("Connection: close") != std::string::npos);
 }
 
+STIPPLE_TEST(HttpUrl, AnExtraHeaderGoesOnTheWireOnce) {
+    Url url;
+    STIPPLE_REQUIRE(parseUrl("http://example.com/x", url));
+    const std::string request =
+        stipple::net::http::buildGet(url, "Stipple/test", "api-secret", "abc123");
+    const std::size_t at = request.find("\r\napi-secret: abc123\r\n");
+    STIPPLE_CHECK(at != std::string::npos);
+    // Before the blank line that ends the headers, not after it.
+    STIPPLE_CHECK(at < request.find("\r\n\r\n"));
+
+    // No name, no header - and not a dangling colon either.
+    const std::string plain = stipple::net::http::buildGet(url, "Stipple/test");
+    STIPPLE_CHECK(plain.find("api-secret") == std::string::npos);
+    STIPPLE_CHECK(plain.find(": \r\n") == std::string::npos);
+}
+
+STIPPLE_TEST(HttpUrl, AHeaderThatCouldSplitTheRequestIsRefused) {
+    using stipple::net::http::headerIsSafe;
+    STIPPLE_CHECK(headerIsSafe("api-secret", "0123abcd"));
+    STIPPLE_CHECK(headerIsSafe("", ""));
+    STIPPLE_CHECK_FALSE(headerIsSafe("api-secret", "abc\r\nHost: evil"));
+    STIPPLE_CHECK_FALSE(headerIsSafe("api-secret", std::string("a\0b", 3)));
+    STIPPLE_CHECK_FALSE(headerIsSafe("api secret", "abc"));
+    STIPPLE_CHECK_FALSE(headerIsSafe("api-secret:", "abc"));
+    STIPPLE_CHECK_FALSE(headerIsSafe("api\nsecret", "abc"));
+}
+
 // --- the response parser -----------------------------------------------------
 
 STIPPLE_TEST(HttpResponse, AnOrdinaryReplyIsRead) {
@@ -248,6 +275,24 @@ STIPPLE_TEST(HttpResponse, AHugeBodyIsCutOffAndSaysSo) {
     STIPPLE_CHECK_EQ(static_cast<int>(parser.response().body.size()),
                      static_cast<int>(ResponseParser::kMaxBodyBytes));
     STIPPLE_CHECK(parser.response().truncated);
+}
+
+STIPPLE_TEST(HttpResponse, ARequestMayAskForALargerBody) {
+    // The kilobyte is the default, not the law. A source that needs a whole
+    // document says so, and gets exactly what it asked for - no more.
+    std::string reply = "HTTP/1.1 200 OK\r\nContent-Length: 6000\r\n\r\n";
+    reply += std::string(6000, 'y');
+
+    ResponseParser parser(4096);
+    STIPPLE_REQUIRE(parser.feed(reply));
+    STIPPLE_CHECK_EQ(static_cast<int>(parser.response().body.size()), 4096);
+    STIPPLE_CHECK(parser.response().truncated);
+
+    ResponseParser roomy(8192);
+    STIPPLE_REQUIRE(roomy.feed(reply));
+    STIPPLE_CHECK_EQ(static_cast<int>(roomy.response().body.size()), 6000);
+    STIPPLE_CHECK_FALSE(roomy.response().truncated);
+    STIPPLE_CHECK(roomy.response().complete);
 }
 
 STIPPLE_TEST(HttpResponse, EndlessHeadersAreRefused) {
@@ -406,6 +451,93 @@ STIPPLE_TEST(HttpFetcher, OnlyOneRequestRunsAtATime) {
         const std::string url = "http://example.com/" + std::to_string(i);
         STIPPLE_CHECK(rig.fetcher.body("s" + std::to_string(i), url) != nullptr);
     }
+}
+
+STIPPLE_TEST(HttpFetcher, TheFetcherWaitsWhileSomebodyElseIsUsingTheClient) {
+    // The device has one HTTP client and more than one thing that fetches.
+    // A request the fetcher did not start is not one it may fail or reset.
+    Rig rig;
+    SimulatorHttpClient::Route theirs;
+    theirs.url = "http://example.com/glucose";
+    theirs.body = "[]";
+    theirs.latencyMillis = 500;
+    rig.client.answer(theirs);
+    SimulatorHttpClient::Route ours;
+    ours.url = "http://example.com/now";
+    ours.body = "1";
+    rig.client.answer(ours);
+
+    stipple::platform::HttpRequest request;
+    request.url = "http://example.com/glucose";
+    STIPPLE_REQUIRE(rig.client.begin(request));
+    STIPPLE_REQUIRE(rig.fetcher.follow("solar", "http://example.com/now", 0));
+
+    // Their request completes (they poll it, as its owner); the fetcher
+    // neither started its own nor touched theirs - the answer is still there
+    // to be collected.
+    for (const std::uint64_t until = rig.now + 700; rig.now < until; rig.now += 33) {
+        rig.client.poll(rig.now);
+        rig.fetcher.tick(rig.now);
+    }
+    STIPPLE_CHECK_EQ(static_cast<int>(rig.client.requests()), 1);
+    STIPPLE_CHECK(rig.client.stage() == SimulatorHttpClient::Stage::Done);
+    STIPPLE_CHECK(rig.client.body() == "[]");
+    STIPPLE_CHECK(rig.fetcher.body("solar", "http://example.com/now") == nullptr);
+
+    // They collect and release it; the fetcher takes its turn.
+    rig.client.reset();
+    rig.run(1000);
+    STIPPLE_CHECK_EQ(static_cast<int>(rig.client.requests()), 2);
+    STIPPLE_CHECK(rig.fetcher.body("solar", "http://example.com/now") != nullptr);
+}
+
+STIPPLE_TEST(HttpFetcher, ForgettingAScriptLeavesSomebodyElsesRequestAlone) {
+    Rig rig;
+    SimulatorHttpClient::Route theirs;
+    theirs.url = "http://example.com/glucose";
+    theirs.body = "[]";
+    theirs.latencyMillis = 500;
+    rig.client.answer(theirs);
+
+    STIPPLE_REQUIRE(rig.fetcher.follow("weather", "http://example.com/w", 600000));
+    rig.run(1000);  // the weather feed is fetched (refused by default) and idle again
+
+    stipple::platform::HttpRequest request;
+    request.url = "http://example.com/glucose";
+    STIPPLE_REQUIRE(rig.client.begin(request));
+    rig.fetcher.forget("weather");
+    STIPPLE_CHECK(rig.client.stage() == SimulatorHttpClient::Stage::Running);
+}
+
+STIPPLE_TEST(SimulatorHttp, RecordsTheHeaderAndCutsTheBodyLikeTheDevice) {
+    SimulatorHttpClient client;
+    SimulatorHttpClient::Route route;
+    route.url = "http://example.com/long";
+    route.body = "0123456789";
+    route.latencyMillis = 0;
+    client.answer(route);
+
+    stipple::platform::HttpRequest request;
+    request.url = "http://example.com/long";
+    request.headerName = "api-secret";
+    request.headerValue = "abc";
+    request.maxBodyBytes = 4;
+    STIPPLE_REQUIRE(client.begin(request));
+    client.poll(1);  // schedules the answer
+    client.poll(2);  // delivers it
+    STIPPLE_REQUIRE(client.stage() == SimulatorHttpClient::Stage::Done);
+    STIPPLE_CHECK(client.body() == "0123");
+    STIPPLE_CHECK(client.lastTruncated());
+    STIPPLE_REQUIRE(!client.askedHeaders().empty());
+    STIPPLE_CHECK(client.askedHeaders().back() == "api-secret: abc");
+
+    client.reset();
+    stipple::platform::HttpRequest bad;
+    bad.url = "http://example.com/long";
+    bad.headerName = "api-secret";
+    bad.headerValue = "abc\r\nHost: evil";
+    STIPPLE_CHECK_FALSE(client.begin(bad));
+    STIPPLE_CHECK(client.failure() == "bad header");
 }
 
 STIPPLE_TEST(HttpFetcher, AFeedThatNeverAnswersDoesNotStopTheOthers) {

@@ -149,9 +149,33 @@ bool parseUrl(std::string_view url, Url& out) noexcept {
     return true;
 }
 
-std::string buildGet(const Url& url, std::string_view userAgent) {
+bool headerIsSafe(std::string_view name, std::string_view value) noexcept {
+    if (name.empty()) {
+        return true;
+    }
+    for (const char c : name) {
+        const bool alpha = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+        const bool mark = c == '!' || c == '#' || c == '$' || c == '%' || c == '&' ||
+                          c == '\'' || c == '*' || c == '+' || c == '-' || c == '.' ||
+                          c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
+        if (!alpha && !digit(c) && !mark) {
+            return false;
+        }
+    }
+    for (const char c : value) {
+        const unsigned char byte = static_cast<unsigned char>(c);
+        if (byte < 0x20 || byte == 0x7F) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string buildGet(const Url& url, std::string_view userAgent, std::string_view headerName,
+                     std::string_view headerValue) {
     std::string request;
-    request.reserve(url.target.size() + url.host.size() + userAgent.size() + 96);
+    request.reserve(url.target.size() + url.host.size() + userAgent.size() + headerName.size() +
+                    headerValue.size() + 100);
     request += "GET ";
     request += url.target;
     request += " HTTP/1.1\r\nHost: ";
@@ -165,6 +189,12 @@ std::string buildGet(const Url& url, std::string_view userAgent) {
     }
     request += "\r\nUser-Agent: ";
     request.append(userAgent);
+    if (!headerName.empty()) {
+        request += "\r\n";
+        request.append(headerName);
+        request += ": ";
+        request.append(headerValue);
+    }
     // No compression offered. Decompressing would mean carrying zlib for a
     // device that reads a kilobyte every few minutes.
     request += "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n";
@@ -265,8 +295,8 @@ bool ResponseParser::consumeHeader(std::string_view line) {
 }
 
 bool ResponseParser::consumeBody() {
-    const std::size_t room = ResponseParser::kMaxBodyBytes > response_.body.size()
-                                 ? ResponseParser::kMaxBodyBytes - response_.body.size()
+    const std::size_t room = maxBodyBytes_ > response_.body.size()
+                                 ? maxBodyBytes_ - response_.body.size()
                                  : 0;
     const std::size_t take = pending_.size() < room ? pending_.size() : room;
     response_.body.append(pending_, 0, take);
@@ -338,8 +368,8 @@ bool ResponseParser::consumeChunks() {
             return true;  // wait for more
         }
 
-        const std::size_t room = kMaxBodyBytes > response_.body.size()
-                                     ? kMaxBodyBytes - response_.body.size()
+        const std::size_t room = maxBodyBytes_ > response_.body.size()
+                                     ? maxBodyBytes_ - response_.body.size()
                                      : 0;
         const std::size_t take = size < room ? size : room;
         response_.body.append(pending_, eol + 2, take);

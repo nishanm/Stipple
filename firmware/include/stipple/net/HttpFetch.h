@@ -41,7 +41,19 @@ bool parseUrl(std::string_view url, Url& out) noexcept;
 /// `Connection: close` rather than keep-alive: the device makes one request
 /// every few minutes, and a connection held open costs a socket and a
 /// timeout-handling path for a saving that would never be measurable.
-std::string buildGet(const Url& url, std::string_view userAgent);
+///
+/// One extra header may be added, as a name and a value. The caller checks
+/// them with `headerIsSafe` first; this function trusts what it is given.
+std::string buildGet(const Url& url, std::string_view userAgent,
+                     std::string_view headerName = {}, std::string_view headerValue = {});
+
+/// Whether a header can go on the wire without splitting the request.
+///
+/// The name must be a token (RFC 7230: letters, digits and a few marks - no
+/// spaces, no colon); the value may carry anything printable but no control
+/// characters, which rules out the CR and LF that would start a second header
+/// or a second request. An empty name means "no header" and is safe.
+bool headerIsSafe(std::string_view name, std::string_view value) noexcept;
 
 /// What came back.
 struct Response {
@@ -65,17 +77,23 @@ struct Response {
 /// named — which may be hostile, or merely enormous.
 class ResponseParser {
 public:
-    /// Longest body kept.
+    /// Longest body kept, unless the request says otherwise.
     ///
     /// One kilobyte. A script draws on a panel 52 pixels wide; anything it can
     /// usefully show is near the front of the document, and the whole point of
     /// a cap is that the device's memory must not depend on what somebody
-    /// else's server decided to send.
+    /// else's server decided to send. A source that genuinely needs a whole
+    /// document asks for a larger cap per request and pays for it knowingly.
     static constexpr std::size_t kMaxBodyBytes = 1024;
 
     /// Longest header block accepted, so a server that never stops sending
     /// headers cannot hold a buffer open for ever.
     static constexpr std::size_t kMaxHeaderBytes = 4096;
+
+    explicit ResponseParser(std::size_t maxBodyBytes = kMaxBodyBytes) noexcept
+        : maxBodyBytes_(maxBodyBytes) {}
+
+    std::size_t maxBodyBytes() const noexcept { return maxBodyBytes_; }
 
     /// Feed bytes. False means the response is malformed and the connection
     /// should be dropped — not that it is finished.
@@ -101,6 +119,7 @@ private:
     bool consumeChunks();
     bool fail(const char* why);
 
+    std::size_t maxBodyBytes_;
     Stage stage_ = Stage::Status;
     std::string pending_;
     std::string failure_;

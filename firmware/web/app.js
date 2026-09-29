@@ -383,6 +383,35 @@
             settings && settings.mqtt && settings.mqtt.passwordSet
                 ? 'A password is set. Type to replace it, or clear the box and save to remove it.'
                 : 'Not set.';
+        // The glucose secret follows the same rule and is described from the
+        // same place, so every path that reloads settings covers both.
+        var glucoseHelp = $('glucose-apiSecret-help');
+        if (glucoseHelp) {
+            glucoseHelp.textContent =
+                settings && settings.glucose && settings.glucose.apiSecretSet
+                    ? 'A secret is set. Type to replace it, or clear the box and save to remove it.'
+                    : 'Not set.';
+        }
+    }
+
+    // --- glucose --------------------------------------------------------------
+    //
+    // Same shape as the MQTT password: write-only, so no data-setting binding.
+
+    function wireGlucose() {
+        var field = $('glucose-apiSecret');
+        if (!field) { return; }
+
+        field.addEventListener('change', function () {
+            send('PATCH', '/api/v1/settings', { glucose: { apiSecret: field.value } })
+                .then(function (updated) {
+                    settings = updated;
+                    field.value = '';  // never hold a credential in the DOM
+                    describePassword();
+                    toast(updated.glucose.apiSecretSet ? 'Secret saved' : 'Secret cleared');
+                })
+                .catch(fail);
+        });
     }
 
     // Mirrors mqtt::deviceIdFromName. Duplicated deliberately and only for the
@@ -2907,6 +2936,7 @@
         wireTabs();
         wireNotify();
         wireMqtt();
+        wireGlucose();
         wireIcons();
         wireScripts();
         wireReboot();

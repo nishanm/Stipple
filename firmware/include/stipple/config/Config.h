@@ -288,6 +288,30 @@ struct VisualizerSettings {
     std::string style = "meter";
 };
 
+/// The glucose app's data source and face.
+///
+/// No default for the URL and none for the credential: this repository is
+/// public, and a LAN address or a secret compiled in would be published with
+/// it. Both arrive through the API and live only on the device.
+struct GlucoseSettings {
+    /// Nightscout base URL, `http://host:port`, no trailing slash. Empty means
+    /// the app has no source and shows its no-data face.
+    std::string url;
+
+    /// The SHA-1 of the site's API secret, as lowercase hex - the form the
+    /// `api-secret` header carries. **The plaintext is never stored**: the API
+    /// hashes what it is given and keeps only this. Write-only like the MQTT
+    /// password; the API reports whether one is set and nothing else.
+    std::string apiSecretSha1;
+
+    /// Seconds between fetches. Clamped to 30..600 on load and on write.
+    int pollSeconds = 60;
+
+    /// Which face to show while a reading is fresh, by name (GlucoseFace).
+    /// A stale reading shows the no-data face whatever this says.
+    std::string face = "hero";
+};
+
 /// Who may talk to this device (ADR 0018).
 ///
 /// HTTP Basic, one mechanism for the API and the browser, because they are the
@@ -332,6 +356,7 @@ struct Config {
     NetworkSettings network;
     NotificationSettings notifications;
     VisualizerSettings visualizer;
+    GlucoseSettings glucose;
 };
 
 enum class LoadStatus : std::uint8_t {

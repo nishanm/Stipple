@@ -706,6 +706,53 @@
             </p>
         </div>
     </div>
+
+    <div class="app-config" data-app="glucose">
+        <div class="field">
+            <label for="glucose-url">Nightscout URL</label>
+            <input type="url" id="glucose-url" maxlength="200" placeholder="http://nightscout.local:1337"
+                   data-setting="glucose.url">
+            <p class="help">
+                The site's base address, with the scheme. Nothing is fetched until
+                one is set; the app shows its no-data face instead.
+            </p>
+        </div>
+        <div class="field">
+            <label for="glucose-apiSecret">API secret</label>
+            <input type="password" id="glucose-apiSecret" maxlength="128" autocomplete="new-password">
+            <p class="help" id="glucose-apiSecret-help">Not set.</p>
+            <p class="help warn-note">
+                Sent over plain HTTP to the device, which keeps only its SHA-1 -
+                the form Nightscout checks. Use a site whose readings you are
+                happy to have on a panel in the room.
+            </p>
+        </div>
+        <div class="row">
+            <div class="field">
+                <label for="glucose-pollSeconds">Ask every</label>
+                <select id="glucose-pollSeconds" data-setting="glucose.pollSeconds">
+                    <option value="30">30 seconds</option>
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                </select>
+            </div>
+            <div class="field">
+                <label for="glucose-face">Face</label>
+                <select id="glucose-face" data-setting="glucose.face">
+                    <option value="hero">Hero &mdash; the number and its direction</option>
+                    <option value="hero-delta">Hero + delta &mdash; with the change and age</option>
+                    <option value="hero-graph">Hero + graph &mdash; three hours beside it</option>
+                    <option value="clock">Clock &mdash; time and value, bedside</option>
+                    <option value="big-graph">Big graph &mdash; the whole panel</option>
+                </select>
+                <p class="help">
+                    A reading older than twenty minutes shows the no-data face
+                    whatever is chosen here.
+                </p>
+            </div>
+        </div>
+    </div>
 </div>
 
 </main>

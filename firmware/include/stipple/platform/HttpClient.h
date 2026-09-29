@@ -1,12 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
 
+#include "stipple/net/HttpFetch.h"
+
 namespace stipple {
 namespace platform {
+
+/// What a fetch asks for, beyond the URL.
+///
+/// One optional header, as a name and a value rather than raw header text, so
+/// an adapter can check the two things that matter - a token for the name, no
+/// control characters in the value - instead of scanning for line breaks. And
+/// a body cap per request: the default is the parser's kilobyte, which suits a
+/// script drawing a headline; a source that needs a whole document says so and
+/// pays for it in memory, once, knowingly.
+struct HttpRequest {
+    std::string_view url;
+    std::string_view headerName;
+    std::string_view headerValue;
+    std::size_t maxBodyBytes = net::http::ResponseParser::kMaxBodyBytes;
+};
 
 /// One outbound HTTP request at a time.
 ///
@@ -38,11 +56,19 @@ public:
 
     /// Start a GET.
     ///
-    /// False when one is already running, when the URL is unusable, or when
-    /// this platform cannot fetch that URL at all — an https URL on a build
-    /// with no TLS, for instance. A false leaves `failure()` describing it,
-    /// so the reason reaches the panel rather than the log alone.
-    virtual bool begin(std::string_view url) = 0;
+    /// False when one is already running, when the URL or header is unusable,
+    /// or when this platform cannot fetch that URL at all — an https URL on a
+    /// build with no TLS, for instance. A false leaves `failure()` describing
+    /// it, so the reason reaches the panel rather than the log alone.
+    virtual bool begin(const HttpRequest& request) = 0;
+
+    /// The common case: a URL and nothing else. Adapters override the
+    /// request form and re-expose this one with `using IHttpClient::begin`.
+    bool begin(std::string_view url) {
+        HttpRequest request;
+        request.url = url;
+        return begin(request);
+    }
 
     /// Drive it. Called once per frame; must return promptly every time.
     virtual void poll(std::uint64_t nowMillis) = 0;

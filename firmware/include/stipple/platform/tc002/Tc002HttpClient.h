@@ -45,16 +45,19 @@ public:
     /// anybody notices a feed has stopped.
     static constexpr int kTimeoutSeconds = 10;
 
-    /// Bytes read off the socket before giving up on the rest.
+    /// Bytes read off the socket before giving up on the rest, for a request
+    /// with the default body cap.
     ///
     /// Larger than the body cap because headers count towards it, and a
     /// server that sends three kilobytes of cookies before a 200-byte body is
-    /// ordinary rather than hostile.
+    /// ordinary rather than hostile. A request asking for a larger body raises
+    /// this by the same amount, so the cap it asked for is the cap it gets.
     static constexpr std::size_t kMaxTransferBytes = 32u * 1024u;
 
     ~Tc002HttpClient() override;
 
-    bool begin(std::string_view url) override;
+    using IHttpClient::begin;
+    bool begin(const HttpRequest& request) override;
     void poll(std::uint64_t nowMillis) override;
     Stage stage() const noexcept override { return stage_; }
     int status() const noexcept override { return status_; }

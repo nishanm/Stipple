@@ -193,6 +193,7 @@ add_library(stipple_core
     src/core/Base64.cpp
     src/core/Checksum.cpp
     src/core/Md5.cpp
+    src/core/Sha1.cpp
     src/core/Log.cpp
     src/core/Rgb.cpp
     src/render/FrameScheduler.cpp
@@ -203,6 +204,7 @@ add_library(stipple_core
     src/apps/ClockApp.cpp
     src/apps/GlucoseApp.cpp
     src/apps/GlucoseFont.cpp
+    src/apps/GlucoseSource.cpp
     src/apps/StopwatchApp.cpp
     src/apps/VisualizerApp.cpp
     src/apps/Unavailable.cpp

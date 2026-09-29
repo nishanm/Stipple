@@ -267,15 +267,20 @@ Tc002HttpClient::~Tc002HttpClient() {
     // shared_ptr, so it can safely outlive this object. Nothing to wait for.
 }
 
-bool Tc002HttpClient::begin(std::string_view url) {
+bool Tc002HttpClient::begin(const HttpRequest& request) {
     if (stage_ == Stage::Running) {
         return false;
     }
 
     Url parsed;
-    if (!net::http::parseUrl(url, parsed)) {
+    if (!net::http::parseUrl(request.url, parsed)) {
         stage_ = Stage::Failed;
         failure_ = "bad url";
+        return false;
+    }
+    if (!net::http::headerIsSafe(request.headerName, request.headerValue)) {
+        stage_ = Stage::Failed;
+        failure_ = "bad header";
         return false;
     }
 
@@ -298,13 +303,21 @@ bool Tc002HttpClient::begin(std::string_view url) {
     // string + string_view - appending is the whole conversion.
     std::string agent = "Stipple/";
     agent.append(kVersion);
-    const std::string request = net::http::buildGet(parsed, agent);
+    const std::string wire =
+        net::http::buildGet(parsed, agent, request.headerName, request.headerValue);
     const std::string host = parsed.host;
     const int port = parsed.port;
     const bool secure = parsed.secure;
+    const std::size_t maxBody = request.maxBodyBytes;
+    // Headers count towards the transfer cap, so a request that asked for a
+    // larger body gets the same headroom above it the default one has.
+    const std::size_t transferCap =
+        maxBody + ResponseParser::kMaxHeaderBytes > kMaxTransferBytes
+            ? maxBody + ResponseParser::kMaxHeaderBytes
+            : kMaxTransferBytes;
 
     try {
-        std::thread worker([exchange, host, port, request, secure]() {
+        std::thread worker([exchange, host, port, wire, secure, maxBody, transferCap]() {
             struct sockaddr_in address;
             if (!resolve(host, port, address)) {
                 exchange->failure = "cannot resolve " + host;
@@ -348,13 +361,13 @@ bool Tc002HttpClient::begin(std::string_view url) {
             }
             Transport transport(socket.get(), session);
 
-            if (!transport.sendAll(request)) {
+            if (!transport.sendAll(wire)) {
                 exchange->failure = "send failed";
                 exchange->done.store(true);
                 return;
             }
 
-            ResponseParser parser;
+            ResponseParser parser(maxBody);
             char chunk[2048];
             std::size_t total = 0;
 
@@ -382,7 +395,7 @@ bool Tc002HttpClient::begin(std::string_view url) {
                 if (parser.done()) {
                     break;
                 }
-                if (total > kMaxTransferBytes) {
+                if (total > transferCap) {
                     // Everything worth keeping is already kept; the rest is a
                     // server talking to itself.
                     break;

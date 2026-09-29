@@ -49,6 +49,7 @@ api::ApiContext ApplicationHost::makeContext() noexcept {
     context.frame = &framebuffer_;
     context.input = this;
     context.scheduler = &scheduler_;
+    context.glucose = &glucoseSource_;
     return context;
 }
 
@@ -273,9 +274,8 @@ void ApplicationHost::installBuiltins() {
         registry_.put(std::move(battery));
     }
 
-    // Needs no hardware to check for. Until a data source is wired it shows a
-    // demo reading, which is honest about being a demo only in the sense that
-    // nothing here claims otherwise yet - the source is the next stage.
+    // Needs no hardware to check for. With no source configured it shows its
+    // no-data face, which is the honest thing for a glucose display to say.
     app::App glucose;
     glucose.id = std::string(kGlucoseAppId);
     glucose.name = "Glucose";
@@ -283,10 +283,6 @@ void ApplicationHost::installBuiltins() {
     glucose.builtin = app::Builtin::Glucose;
     glucose.durationSeconds = 0;
     registry_.put(std::move(glucose));
-
-    const platform::ISystemClock& systemClock = platform_.clock();
-    glucose_ = apps::demoGlucoseReading(systemClock.wallClockValid() ? systemClock.unixSeconds()
-                                                                     : 0);
 }
 
 void ApplicationHost::loadIcons() {
@@ -382,6 +378,7 @@ void ApplicationHost::setScriptRunner(script::IScriptRunner* runner) {
     // platform with no HTTP client is a script being told it cannot fetch
     // rather than requests queueing for a socket that will never exist.
     fetcher_.setClient(platform_.httpClient());
+    glucoseSource_.setClient(platform_.httpClient());
     runner->setHttp(&fetcher_);
 
     // And the microphone, for the visualisers. Null is a device that cannot
@@ -1383,6 +1380,10 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
     applyCarouselSettings();
     applyTimeSettings();
     applyBrightness();
+    // Settings reach the host by being written into settings_, so the source
+    // is re-told every tick; configure() only acts on a change.
+    glucoseSource_.configure(settings_.glucose.url, settings_.glucose.apiSecretSha1,
+                             settings_.glucose.pollSeconds);
 
     if (rescue_.tick(nowMillis)) {
         performRescue();
@@ -1601,8 +1602,11 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
                         scheduler_.invalidate();
                     }
                 } else if (active->builtin == app::Builtin::Glucose) {
-                    // Nothing on a glucose face moves faster than the minute.
-                    if (apps::glucoseChanged(lastClockMillis_, nowMillis)) {
+                    // A new reading, or the minute rolling over (age pips, the
+                    // stale rule, the clock face); nothing here moves faster.
+                    if (glucoseSource_.revision() != lastGlucoseRevision_ ||
+                        apps::glucoseChanged(lastClockMillis_, nowMillis)) {
+                        lastGlucoseRevision_ = glucoseSource_.revision();
                         scheduler_.invalidate();
                     }
                 } else if (refreshActiveScene() && scene_.animates()) {
@@ -1629,9 +1633,16 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
         mqtt_.tick(nowMillis);
 
         // Same loop, same reason. One request at a time, and the schedule
-        // decides which - see ScriptFetcher.
-        fetcher_.setNetworkUp(platform_.network() != nullptr &&
-                              platform_.network()->status().connected);
+        // decides which - see ScriptFetcher. The glucose source goes first:
+        // both share the one client and each waits while the other's request
+        // is in flight, so order only decides who wins a tie.
+        const bool networkUp =
+            platform_.network() != nullptr && platform_.network()->status().connected;
+        const platform::ISystemClock& systemClock = platform_.clock();
+        glucoseSource_.setNetworkUp(networkUp);
+        glucoseSource_.tick(nowMillis, systemClock.unixSeconds(), systemClock.wallClockValid(),
+                            currentUtcOffsetSeconds());
+        fetcher_.setNetworkUp(networkUp);
         fetcher_.tick(nowMillis);
     }
 
@@ -1957,9 +1968,16 @@ void ApplicationHost::renderFrame(std::uint64_t nowMillis) {
         case app::Builtin::Stopwatch:
             apps::renderStopwatch(canvas, stopwatch_, nowMillis, apps::StopwatchStyle{});
             return;
-        case app::Builtin::Glucose:
-            apps::renderGlucose(canvas, glucose_, apps::GlucoseFace::Hero);
+        case app::Builtin::Glucose: {
+            // A stale reading shows the explicit no-data face whatever face is
+            // chosen: a grey "---" on the hero face reads as a value that is
+            // merely dim, and this display exists to be read across a room.
+            const apps::glucose::Reading& reading = glucoseSource_.reading();
+            apps::renderGlucose(canvas, reading,
+                                reading.stale() ? apps::GlucoseFace::NoData
+                                                : apps::glucoseFaceFromName(settings_.glucose.face));
             return;
+        }
         case app::Builtin::TestPattern:
             demo::drawTestPattern(canvas, static_cast<int>(nowMillis / 33u));
             return;

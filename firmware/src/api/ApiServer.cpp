@@ -20,8 +20,12 @@
 #include "stipple/script/IScriptRunner.h"
 #include "stipple/app/Carousel.h"
 #include "stipple/apps/ClockApp.h"
+#include "stipple/apps/GlucoseApp.h"
+#include "stipple/apps/GlucoseSource.h"
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/config/Config.h"
+#include "stipple/core/Sha1.h"
+#include "stipple/net/HttpFetch.h"
 #include "stipple/core/Log.h"
 #include "stipple/core/Version.h"
 #include "stipple/json/Json.h"
@@ -186,6 +190,16 @@ void writeSettings(JsonWriter& writer, const config::Config& settings) {
         .key("visualizer")
         .beginObject()
         .member("style", settings.visualizer.style)
+        .endObject()
+        .key("glucose")
+        .beginObject()
+        .member("url", settings.glucose.url)
+        // The credential is never returned, not even as its hash - the hash
+        // is what the server accepts, so it is the credential. A boolean says
+        // whether one is set (§22, the MQTT password rule).
+        .member("apiSecretSet", !settings.glucose.apiSecretSha1.empty())
+        .member("pollSeconds", static_cast<std::int64_t>(settings.glucose.pollSeconds))
+        .member("face", settings.glucose.face)
         .endObject()
         .endObject();
 }
@@ -621,6 +635,33 @@ Response ApiServer::handleDiagnostics(const Request& request, std::uint64_t nowM
         writer.key("carousel").beginObject()
             .member("active", active != nullptr ? active->id : std::string())
             .member("paused", context_.carousel->paused())
+            .endObject();
+    }
+
+    if (context_.glucose != nullptr) {
+        // Counts and the last outcome - enough to tell "never configured" from
+        // "server refusing us" from "network down" without seeing the URL,
+        // which usually names a person, or the credential, which never leaves.
+        const apps::glucose::NightscoutSource::Status& status = context_.glucose->status();
+        const std::int64_t holdSeconds =
+            status.holdUntilMillis > nowMillis
+                ? static_cast<std::int64_t>((status.holdUntilMillis - nowMillis) / 1000u)
+                : 0;
+        const std::int64_t successAge =
+            status.lastSuccessMillis > 0
+                ? static_cast<std::int64_t>((nowMillis - status.lastSuccessMillis) / 1000u)
+                : -1;
+        writer.key("glucose").beginObject()
+            .member("configured", context_.glucose->configured())
+            .member("fetches", static_cast<std::int64_t>(status.fetches))
+            .member("failures", static_cast<std::int64_t>(status.failures))
+            .member("lastHttpStatus", static_cast<std::int64_t>(status.lastHttpStatus))
+            .member("lastBodyBytes", static_cast<std::int64_t>(status.lastBodyBytes))
+            .member("lastFailure", std::string(status.lastFailure))
+            .member("lastSuccessAgeSeconds", successAge)
+            .member("samples", static_cast<std::int64_t>(status.sampleCount))
+            .member("fatalStreak", static_cast<std::int64_t>(status.fatalStreak))
+            .member("holdSeconds", holdSeconds)
             .endObject();
     }
 
@@ -1797,6 +1838,54 @@ Response ApiServer::handleSettings(const Request& request) {
                 return unprocessable("'visualizer.style' is not a known style");
             }
             updated.visualizer.style = name;
+        }
+    }
+
+    if (const json::Value glucose = root["glucose"]; glucose.isObject()) {
+        if (const json::Value value = glucose["url"]; value.isString()) {
+            std::string url = value.toString();
+            while (!url.empty() && url.back() == '/') {
+                url.pop_back();
+            }
+            // Validated as the URL that will actually be fetched, so a base
+            // that only fails once the path is appended is refused here rather
+            // than discovered as a fetch that never works.
+            if (!url.empty()) {
+                if (url.size() > apps::glucose::NightscoutSource::kMaxBaseUrlBytes) {
+                    return unprocessable("'glucose.url' is too long");
+                }
+                net::http::Url parsed;
+                if (!net::http::parseUrl(apps::glucose::NightscoutSource::entriesUrl(url), parsed)) {
+                    return unprocessable("'glucose.url' must be an http:// or https:// URL");
+                }
+            }
+            updated.glucose.url = url;
+        }
+        // Write-only, and never kept as typed: Nightscout checks the SHA-1 of
+        // the secret, so the SHA-1 is the only form the device stores. An empty
+        // string clears it, as with every other credential here.
+        if (const json::Value value = glucose["apiSecret"]; value.isString()) {
+            const std::string secret = value.toString();
+            if (secret.size() > 128) {
+                return unprocessable("'glucose.apiSecret' is too long");
+            }
+            updated.glucose.apiSecretSha1 =
+                secret.empty() ? std::string() : Sha1::hex(secret.data(), secret.size());
+        }
+        if (const json::Value value = glucose["pollSeconds"]; value.isNumber()) {
+            const std::int64_t seconds = value.toInt(-1);
+            if (seconds < apps::glucose::NightscoutSource::kMinPollSeconds ||
+                seconds > apps::glucose::NightscoutSource::kMaxPollSeconds) {
+                return unprocessable("'glucose.pollSeconds' must be 30-600");
+            }
+            updated.glucose.pollSeconds = static_cast<int>(seconds);
+        }
+        if (const json::Value value = glucose["face"]; value.isString()) {
+            const std::string name = value.toString();
+            if (apps::glucoseFaceName(apps::glucoseFaceFromName(name)) != name) {
+                return unprocessable("'glucose.face' is not a known face");
+            }
+            updated.glucose.face = name;
         }
     }
 

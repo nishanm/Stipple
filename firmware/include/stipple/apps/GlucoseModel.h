@@ -84,11 +84,56 @@ inline Trend trendFromName(std::string_view name) noexcept {
     return Trend::None;
 }
 
-/// One reading as a source reports it: when and what.
+/// One reading as a source reports it: when, what, which way.
 struct Sample {
     std::int64_t epoch = 0;
     int sgv = 0;
+    Trend trend = Trend::None;
 };
+
+/// Change since the previous reading, or none when it cannot be stated.
+///
+/// Not "latest minus previous": Dexcom Share returns the same reading twice
+/// about eleven seconds apart, so the previous element is often the current
+/// one's twin and the delta would come out zero. The firmware takes everything
+/// inside a 6.5-minute window and works from its min and max, which is immune
+/// to that. `samples` are oldest first.
+inline constexpr std::int64_t kDeltaWindowSeconds = 6 * 60 + 30;
+
+inline bool deltaFor(const Sample* samples, int count, int& delta) noexcept {
+    if (count < 2) {
+        return false;
+    }
+    const Sample& last = samples[count - 1];
+    int first = 0;
+    while (first < count && last.epoch - samples[first].epoch > kDeltaWindowSeconds) {
+        ++first;
+    }
+    int inWindow = count - first;
+    if (inWindow > 5) {  // Libre-style dense data: just the last two
+        first = count - 2;
+        inWindow = 2;
+    }
+    if (inWindow < 2) {
+        return false;
+    }
+    int lo = samples[first].sgv;
+    int hi = samples[first].sgv;
+    for (int i = first + 1; i < count; ++i) {
+        lo = samples[i].sgv < lo ? samples[i].sgv : lo;
+        hi = samples[i].sgv > hi ? samples[i].sgv : hi;
+    }
+    const int base = last.sgv;
+    if (lo != base && hi != base) {
+        return false;  // moved both ways inside the window; no honest single number
+    }
+    const int change = (lo == base) ? base - hi : base - lo;
+    if (change > 99 || change < -99) {
+        return false;
+    }
+    delta = change;
+    return true;
+}
 
 /// What a face is asked to draw: the newest value with its context, as of `now`.
 ///
@@ -158,6 +203,46 @@ struct Reading {
         return std::snprintf(out, size, "%+d", delta);
     }
 };
+
+/// A reading as of `nowUnix`, built from samples oldest first.
+///
+/// The newest sample's value and direction, the delta by the window rule, the
+/// age from the newest sample, and the whole history for the graphs. Building
+/// it again from the same samples with a later `now` is how a reading ages
+/// when the source stops answering - no field is ever mutated in place. No
+/// samples at all is a reading 999 minutes old: stale by every rule, drawn as
+/// the explicit no-data face rather than a plausible number.
+inline Reading readingFromSamples(const Sample* samples, int count, std::int64_t nowUnix,
+                                  int utcOffsetSeconds, bool timeKnown) noexcept {
+    Reading reading;
+    reading.now = nowUnix;
+    reading.timeKnown = timeKnown;
+    if (timeKnown) {
+        const std::int64_t local = nowUnix + utcOffsetSeconds;
+        std::int64_t secondsOfDay = local % 86400;
+        if (secondsOfDay < 0) {
+            secondsOfDay += 86400;
+        }
+        reading.hour = static_cast<int>(secondsOfDay / 3600);
+        reading.minute = static_cast<int>((secondsOfDay % 3600) / 60);
+    }
+    if (count <= 0) {
+        reading.minutesAgo = 999;
+        return reading;
+    }
+    const int kept = count < kMaxHistory ? count : kMaxHistory;
+    const Sample* start = samples + (count - kept);
+    for (int i = 0; i < kept; ++i) {
+        reading.pushSample(start[i]);
+    }
+    const Sample& newest = start[kept - 1];
+    reading.sgv = newest.sgv;
+    reading.trend = newest.trend;
+    reading.hasDelta = deltaFor(start, kept, reading.delta);
+    const std::int64_t age = nowUnix - newest.epoch;
+    reading.minutesAgo = age > 0 ? static_cast<int>(age / 60) : 0;
+    return reading;
+}
 
 }  // namespace glucose
 }  // namespace apps
