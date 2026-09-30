@@ -267,6 +267,8 @@ std::string buildBody(const Config& config) {
     body += std::to_string(config.glucose.pollSeconds);
     body += ",\"face\":";
     appendEscaped(body, config.glucose.face);
+    body += ",\"pinned\":";
+    body += config.glucose.pinned ? "true" : "false";
     body += '}';
 
     body += '}';
@@ -453,6 +455,7 @@ bool ConfigStore::deserialize(std::string_view payload,
     parsed.glucose.pollSeconds =
         clampPollSeconds(glucose["pollSeconds"].toInt(parsed.glucose.pollSeconds));
     parsed.glucose.face = glucose["face"].toString(parsed.glucose.face);
+    parsed.glucose.pinned = glucose["pinned"].toBool(parsed.glucose.pinned);
 
     const json::Value clock = body["clock"];
     parsed.clock.twentyFourHour = clock["twentyFourHour"].toBool(parsed.clock.twentyFourHour);

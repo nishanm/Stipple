@@ -24,6 +24,12 @@ device without a capture of that device first.
   no-data face once it is twenty minutes old, and holds off for five minutes
   (doubling to thirty) after a refused credential. The device keeps only the
   secret's SHA-1 - the form Nightscout checks - and never returns it.
+- **The glucose display is a mode.** While a Nightscout source is set and the
+  app is pinned (the default), it stays on screen and the knob moves between
+  its faces instead of between apps - one detent, one face, the choice kept
+  across reboots. The middle button still goes back to the clock, and the
+  carousel returns to glucose on its own. A face changed while the reading is
+  stale is named on the readout, since the no-data face would hide the change.
 - **Fetches can carry a header and ask for a larger body.** `IHttpClient::begin`
   takes an `HttpRequest` with one optional header and a per-request body cap;
   the kilobyte default is unchanged for scripts. The simulator now truncates at
@@ -34,6 +40,8 @@ device without a capture of that device first.
 - **Two things fetching no longer fight over the one HTTP client.** The script
   fetcher waits while another request is in flight instead of failing it, and
   deleting a script no longer resets a fetch it did not start.
+- **An expired adjustment readout is painted over.** Over a face that does not
+  redraw on its own it stayed on the panel until the next minute.
 
 - **`https` works.** Stipple carries its own TLS, so a script can fetch from
   an API that requires it. The certificate chain is verified against trusted

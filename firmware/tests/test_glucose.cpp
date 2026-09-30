@@ -225,6 +225,26 @@ STIPPLE_TEST(Glucose, NamesRoundTrip) {
     STIPPLE_CHECK(glucoseFaceFromName("weather") == GlucoseFace::Hero);
 }
 
+STIPPLE_TEST(Glucose, TheKnobStepsThroughTheSelectableFacesOnly) {
+    using stipple::apps::glucoseFaceStep;
+    using stipple::apps::kGlucoseSelectableFaceCount;
+    // Round the five in each direction, never touching NoData.
+    GlucoseFace face = GlucoseFace::Hero;
+    for (int i = 0; i < kGlucoseSelectableFaceCount; ++i) {
+        face = glucoseFaceStep(face, 1);
+        STIPPLE_CHECK(face != GlucoseFace::NoData);
+    }
+    STIPPLE_CHECK(face == GlucoseFace::Hero);
+    STIPPLE_CHECK(glucoseFaceStep(GlucoseFace::Hero, -1) == GlucoseFace::BigGraph);
+    STIPPLE_CHECK(glucoseFaceStep(GlucoseFace::BigGraph, 1) == GlucoseFace::Hero);
+    STIPPLE_CHECK(glucoseFaceStep(GlucoseFace::HeroDelta, -1) == GlucoseFace::Hero);
+    // A bigger step is still one face: one detent, one face.
+    STIPPLE_CHECK(glucoseFaceStep(GlucoseFace::Hero, 5) == GlucoseFace::HeroDelta);
+    // The status face steps back onto the first choice.
+    STIPPLE_CHECK(glucoseFaceStep(GlucoseFace::NoData, 1) == GlucoseFace::Hero);
+    STIPPLE_CHECK(glucoseFaceStep(GlucoseFace::NoData, -1) == GlucoseFace::Hero);
+}
+
 STIPPLE_TEST(Glucose, RedrawsOnTheMinute) {
     STIPPLE_CHECK_FALSE(glucoseChanged(60000, 119999));
     STIPPLE_CHECK(glucoseChanged(119999, 120000));

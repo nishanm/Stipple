@@ -3,6 +3,8 @@
 
 #include "stipple/api/BasicAuth.h"
 
+#include <cstdio>
+
 #include "stipple/apps/BatteryApp.h"
 #include "stipple/apps/GlucoseApp.h"
 #include "stipple/apps/StopwatchApp.h"
@@ -172,6 +174,13 @@ bool ApplicationHost::initialize() {
         installBuiltins();
         applyStoredAppOrder();
         loadIcons();
+        // A glucose display boots onto glucose, not onto the clock. After the
+        // stored order so a disabled app fails the pin cleanly.
+        glucoseSource_.configure(settings_.glucose.url, settings_.glucose.apiSecretSha1,
+                                 settings_.glucose.pollSeconds);
+        if (glucoseHoldWanted()) {
+            carousel_.pin(kGlucoseAppId, startedAt);
+        }
     } else {
         logger_.warn(startedAt, "safe mode: no apps or icons loaded");
     }
@@ -571,12 +580,23 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
                 navigator_.moveCursor(1, lastTickMillis_);
                 break;
             }
+            // While the glucose app holds the screen, the things are its
+            // faces. Still one detent, one thing - and never carousel_.next(),
+            // which would drop the pin. The middle button is the way out.
+            if (carousel_.isPinned() && carousel_.pinnedId() == kGlucoseAppId) {
+                stepGlucoseFace(1);
+                break;
+            }
             transitionDirection_ = render::TransitionDirection::Forward;
             carousel_.next(lastTickMillis_);
             break;
         case input::Action::AppPrevious:
             if (navigator_.inSettings()) {
                 navigator_.moveCursor(-1, lastTickMillis_);
+                break;
+            }
+            if (carousel_.isPinned() && carousel_.pinnedId() == kGlucoseAppId) {
+                stepGlucoseFace(-1);
                 break;
             }
             transitionDirection_ = render::TransitionDirection::Backward;
@@ -648,6 +668,13 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
             }
             if (carousel_.activate(kClockAppId, lastTickMillis_)) {
                 transitionDirection_ = render::TransitionDirection::Backward;
+            } else if (carousel_.isPinned() && carousel_.pinnedId() == kGlucoseAppId) {
+                // No clock to go back to (disabled, or not installed). A held
+                // glucose app with no way out would be the trap ADR 0017
+                // forbids, so "back" still leaves - to whatever is next.
+                carousel_.unpin();
+                transitionDirection_ = render::TransitionDirection::Backward;
+                carousel_.next(lastTickMillis_);
             }
             break;
         case input::Action::SettingsToggle:
@@ -681,6 +708,7 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
             // anyone noticing it did nothing.
             adjustmentShownUntilMillis_ = lastTickMillis_ + kAdjustmentReadoutMillis;
             adjustmentIsVolume_ = platform_.audio() != nullptr;
+            adjustmentIsFace_ = false;
             break;
         }
         case input::Action::BrightnessUp:
@@ -694,6 +722,7 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
                              action.repeat);
             adjustmentShownUntilMillis_ = lastTickMillis_ + kAdjustmentReadoutMillis;
             adjustmentIsVolume_ = false;
+            adjustmentIsFace_ = false;
             break;
         case input::Action::VolumeUp:
         case input::Action::VolumeDown:
@@ -1034,6 +1063,55 @@ void ApplicationHost::persistAppOrderIfChanged() {
     persistedAppRevision_ = registry_.revision();
 }
 
+bool ApplicationHost::glucoseHoldWanted() const noexcept {
+    return settings_.glucose.pinned && glucoseSource_.configured();
+}
+
+void ApplicationHost::applyGlucoseHold(std::uint64_t nowMillis) {
+    const bool pinnedHere = carousel_.isPinned() && carousel_.pinnedId() == kGlucoseAppId;
+    if (glucoseHoldWanted()) {
+        // Pinned only once the carousel is showing it - by rotation, by the
+        // knob, or by the API - so "back" can still leave: the pin does not
+        // chase the user, it waits for the app to come round again.
+        const app::App* showing = carousel_.active();
+        if (!pinnedHere && !carousel_.isPinned() && showing != nullptr &&
+            showing->id == kGlucoseAppId) {
+            carousel_.pin(kGlucoseAppId, nowMillis);
+        }
+    } else if (pinnedHere) {
+        carousel_.unpin();
+    }
+}
+
+void ApplicationHost::stepGlucoseFace(int direction) {
+    const apps::GlucoseFace current = apps::glucoseFaceFromName(settings_.glucose.face);
+    settings_.glucose.face = apps::glucoseFaceName(apps::glucoseFaceStep(current, direction));
+    glucoseFaceDirtyMillis_ = lastTickMillis_ == 0 ? 1 : lastTickMillis_;
+    // A stale reading draws the no-data face whatever was chosen, so the
+    // change would be invisible - and a knob that changes nothing you can see
+    // is a broken knob. Name the face instead, the way − / + name a level.
+    if (glucoseSource_.reading().stale()) {
+        adjustmentShownUntilMillis_ = lastTickMillis_ + kAdjustmentReadoutMillis;
+        adjustmentIsVolume_ = false;
+        adjustmentIsFace_ = true;
+    }
+    scheduler_.invalidate();
+}
+
+void ApplicationHost::persistGlucoseFaceIfChanged() {
+    if (glucoseFaceDirtyMillis_ == 0 ||
+        lastTickMillis_ - glucoseFaceDirtyMillis_ < kGlucoseFaceSaveDelayMillis) {
+        return;
+    }
+    glucoseFaceDirtyMillis_ = 0;
+    if (bootMode_ != BootMode::Normal) {
+        return;
+    }
+    if (!configStore_.save(settings_)) {
+        logger_.error(lastTickMillis_, "could not persist glucose face");
+    }
+}
+
 void ApplicationHost::rememberAppOrder() {
     settings_.apps.order.clear();
     settings_.apps.order.reserve(static_cast<std::size_t>(registry_.count()));
@@ -1315,10 +1393,11 @@ void ApplicationHost::renderAdjustment(Canvas& canvas) const {
     // whatever is being changed, it reads the same whether you got there by
     // holding the knob or by tapping a button.
     const bool volume = adjustmentIsVolume_;
+    const bool face = adjustmentIsFace_;
 
     const int level = volume ? static_cast<int>(settings_.audio.volumePercent)
                              : static_cast<int>(settings_.display.brightness);
-    const int permille = volume ? level * 10 : (level * 1000) / 255;
+    const int permille = face ? -1 : volume ? level * 10 : (level * 1000) / 255;
 
     // Cleared rather than blended. This is a momentary interruption, and half
     // an app showing through the digits is harder to read than either alone.
@@ -1329,14 +1408,29 @@ void ApplicationHost::renderAdjustment(Canvas& canvas) const {
     label.color = colors::kWhite;
     label.hAlign = text::HAlign::Left;
     label.vAlign = text::VAlign::Top;
-    text::draw(canvas, volume ? "VOLUME" : "BRIGHT",
+    text::draw(canvas, face ? "FACE" : volume ? "VOLUME" : "BRIGHT",
                Rect{1, 0, Framebuffer::kWidth - 2, 7}, label);
 
     char value[10] = {};
-    const int digits = writeNumber(value, sizeof(value), level);
-    if (volume && digits > 0 && digits < static_cast<int>(sizeof(value)) - 1) {
-        value[digits] = '%';
-        value[digits + 1] = 0;
+    if (face) {
+        // Short words, because eight 5x7 glyphs is the width of the panel and
+        // "hero-delta" is ten. Enough to tell the faces apart by name.
+        const char* word = "HERO";
+        switch (apps::glucoseFaceFromName(settings_.glucose.face)) {
+            case apps::GlucoseFace::HeroDelta: word = "DELTA"; break;
+            case apps::GlucoseFace::HeroGraph: word = "GRAPH"; break;
+            case apps::GlucoseFace::Clock: word = "CLOCK"; break;
+            case apps::GlucoseFace::BigGraph: word = "BIG"; break;
+            case apps::GlucoseFace::Hero:
+            case apps::GlucoseFace::NoData: break;
+        }
+        std::snprintf(value, sizeof value, "%s", word);
+    } else {
+        const int digits = writeNumber(value, sizeof(value), level);
+        if (volume && digits > 0 && digits < static_cast<int>(sizeof(value)) - 1) {
+            value[digits] = '%';
+            value[digits + 1] = 0;
+        }
     }
 
     text::TextStyle reading = label;
@@ -1377,6 +1471,7 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
     persistIconsIfChanged();
     persistScriptsIfChanged();
     persistAppOrderIfChanged();
+    persistGlucoseFaceIfChanged();
     applyCarouselSettings();
     applyTimeSettings();
     applyBrightness();
@@ -1527,6 +1622,7 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
 
         if (!inSettings && !stopwatchHolding) {
             carouselMoved = carousel_.tick(nowMillis);
+            applyGlucoseHold(nowMillis);
         } else if (stopwatchHolding) {
             // Kept fresh so the app does not vanish the instant it stops.
             carousel_.restartDwell(nowMillis);
@@ -1562,6 +1658,15 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
             // the frame interval rather than every tick, since that is the
             // fastest it could usefully change anyway.
             if (settings_.display.overlay != "none") {
+                scheduler_.invalidate();
+            }
+
+            // A readout that has just expired has to be painted over, whatever
+            // sits beneath it. The clock underneath redraws every second and
+            // hid this; a static face does not, and kept the readout up until
+            // its next minute.
+            if (adjustmentShownUntilMillis_ != 0 && nowMillis >= adjustmentShownUntilMillis_) {
+                adjustmentShownUntilMillis_ = 0;
                 scheduler_.invalidate();
             }
 

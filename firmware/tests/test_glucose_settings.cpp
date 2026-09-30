@@ -86,6 +86,24 @@ STIPPLE_TEST(GlucoseSettings, RoundTripThroughTheStore) {
     STIPPLE_CHECK_EQ(read.glucose.face, std::string("clock"));
 }
 
+STIPPLE_TEST(GlucoseSettings, PinnedRoundTripsAndIsChecked) {
+    SimulatorPlatform platform;
+    ConfigStore store(platform.storage());
+    Config written;
+    written.glucose.pinned = false;
+    STIPPLE_CHECK(store.save(written));
+    Config read;
+    STIPPLE_CHECK(store.load(read).status == LoadStatus::Loaded);
+    STIPPLE_CHECK_FALSE(read.glucose.pinned);
+
+    Fixture fixture;
+    STIPPLE_CHECK(fixture.config.glucose.pinned);
+    STIPPLE_CHECK(contains(fixture.call("GET", "/api/v1/settings").body, "\"pinned\":true"));
+    STIPPLE_CHECK_EQ(fixture.call("PATCH", "/api/v1/settings", R"({"glucose":{"pinned":"yes"}})").status, 422);
+    STIPPLE_CHECK_EQ(fixture.call("PATCH", "/api/v1/settings", R"({"glucose":{"pinned":false}})").status, 200);
+    STIPPLE_CHECK_FALSE(fixture.config.glucose.pinned);
+}
+
 STIPPLE_TEST(GlucoseSettings, TheDefaultsNameNothing) {
     // A public repository: no address, no credential, until somebody types one.
     const Config fresh;

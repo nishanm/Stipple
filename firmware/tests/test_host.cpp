@@ -1765,6 +1765,228 @@ STIPPLE_TEST(Host, AppOrderSurvivesARestart) {
     STIPPLE_CHECK_EQ(restarted.apps().at(0)->id, reversedFirst);
 }
 
+// --- the glucose display as a mode ---------------------------------------------
+
+namespace {
+
+/// A stored configuration with a glucose source, so the app holds the screen.
+/// The simulator's HTTP client refuses every URL by default, so the reading
+/// stays at no-data; these tests are about the knob, not the source.
+stipple::config::Config glucoseConfigured(bool pinned = true) {
+    stipple::config::Config saved;
+    saved.glucose.url = "http://nightscout.example:1337";
+    saved.glucose.pinned = pinned;
+    return saved;
+}
+
+void seedConfig(SimulatorPlatform& platform, const stipple::config::Config& saved) {
+    stipple::config::ConfigStore store(platform.storage());
+    STIPPLE_CHECK(store.save(saved));
+}
+
+/// One detent, then a tick so the host has processed it.
+void detent(ApplicationHost& host, SimulatorPlatform& platform, bool clockwise) {
+    InputEvent tick;
+    tick.source = clockwise ? RawInput::RotaryRight : RawInput::RotaryLeft;
+    tick.phase = ButtonPhase::Tick;
+    tick.timestampMillis = platform.simulatedClock().monotonicMillis();
+    host.handleInput(tick);
+    platform.simulatedClock().advance(200);
+    host.tick(platform.simulatedClock().monotonicMillis());
+}
+
+std::string activeId(ApplicationHost& host) {
+    const stipple::app::App* active = host.carousel().active();
+    return active == nullptr ? std::string() : active->id;
+}
+
+bool framesEqual(const Framebuffer& a, const Framebuffer& b) {
+    for (int y = 0; y < Framebuffer::kHeight; ++y) {
+        for (int x = 0; x < Framebuffer::kWidth; ++x) {
+            if (a.at(x, y) != b.at(x, y)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+}  // namespace
+
+STIPPLE_TEST(Host, TheGlucoseAppHoldsTheScreenWhenASourceIsConfigured) {
+    // A glucose display boots onto glucose and stays there. Without this the
+    // carousel carried it away eight seconds after every boot.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured());
+
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_CHECK_EQ(activeId(host), std::string("glucose"));
+    STIPPLE_CHECK(host.carousel().isPinned());
+
+    run(host, platform, 60000);
+    STIPPLE_CHECK_EQ(activeId(host), std::string("glucose"));
+    STIPPLE_CHECK(host.carousel().isPinned());
+}
+
+STIPPLE_TEST(Host, TheKnobStepsGlucoseFacesWhileItHolds) {
+    // The knob still moves between things; while the glucose app holds the
+    // screen, the things are its faces. One detent, one face, wrapping, and
+    // the app never leaves the screen for it.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured());
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_REQUIRE(activeId(host) == "glucose");
+
+    detent(host, platform, true);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero-delta"));
+    STIPPLE_CHECK_EQ(activeId(host), std::string("glucose"));
+    STIPPLE_CHECK(host.carousel().isPinned());
+
+    for (int i = 0; i < 4; ++i) {
+        detent(host, platform, true);
+    }
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero"));
+
+    detent(host, platform, false);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("big-graph"));
+    detent(host, platform, false);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("clock"));
+    STIPPLE_CHECK_EQ(activeId(host), std::string("glucose"));
+}
+
+STIPPLE_TEST(Host, BackLeavesTheGlucoseAppAndTheCarouselComesBackToIt) {
+    // No mode is a trap. The middle button keeps its meaning - go back, to
+    // the clock - and the pin does not chase the user: the carousel rotates,
+    // and when it comes round to glucose again it holds again.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured());
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_REQUIRE(activeId(host) == "glucose");
+
+    const std::uint64_t at = platform.simulatedClock().monotonicMillis();
+    platform.simulatedInput().pressAndRelease(RawInput::KeyMiddle, at, 100);
+    run(host, platform, at + 600);
+    STIPPLE_CHECK_EQ(activeId(host), std::string("clock"));
+    STIPPLE_CHECK_FALSE(host.carousel().isPinned());
+
+    // Clock and stopwatch dwell eight seconds each by default; glucose is third.
+    run(host, platform, at + 40000);
+    STIPPLE_CHECK_EQ(activeId(host), std::string("glucose"));
+    STIPPLE_CHECK(host.carousel().isPinned());
+}
+
+STIPPLE_TEST(Host, AFaceChosenWithTheKnobSurvivesARestart) {
+    // Chosen on the device, kept on the device: written once the knob has been
+    // still for two seconds, not once per detent.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured());
+    {
+        ApplicationHost host(platform, quietConfig());
+        host.initialize();
+        run(host, platform, 200);
+        detent(host, platform, true);
+        detent(host, platform, true);
+        STIPPLE_REQUIRE(host.settings().glucose.face == "hero-graph");
+        run(host, platform, platform.simulatedClock().monotonicMillis() + 3000);
+        host.shutdown();
+    }
+    ApplicationHost restarted(platform, quietConfig());
+    restarted.initialize();
+    run(restarted, platform, platform.simulatedClock().monotonicMillis() + 200);
+    STIPPLE_CHECK_EQ(restarted.settings().glucose.face, std::string("hero-graph"));
+    STIPPLE_CHECK_EQ(activeId(restarted), std::string("glucose"));
+}
+
+STIPPLE_TEST(Host, WithoutASourceTheKnobStillMovesBetweenApps) {
+    // Pinned is on by default, but it means nothing until a source exists:
+    // a device nobody has pointed at Nightscout keeps Stipple's carousel.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_CHECK_FALSE(host.carousel().isPinned());
+    const std::string before = activeId(host);
+
+    detent(host, platform, true);
+    STIPPLE_CHECK(activeId(host) != before);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero"));
+}
+
+STIPPLE_TEST(Host, PinnedOffKeepsTheCarouselRotating) {
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured(false));
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_CHECK_FALSE(host.carousel().isPinned());
+
+    // Rotates through glucose without sticking to it.
+    bool sawGlucose = false;
+    bool leftGlucose = false;
+    for (int i = 0; i < 60; ++i) {
+        run(host, platform, platform.simulatedClock().monotonicMillis() + 1000);
+        if (activeId(host) == "glucose") {
+            sawGlucose = true;
+        } else if (sawGlucose) {
+            leftGlucose = true;
+        }
+    }
+    STIPPLE_CHECK(sawGlucose);
+    STIPPLE_CHECK(leftGlucose);
+    STIPPLE_CHECK_FALSE(host.carousel().isPinned());
+}
+
+STIPPLE_TEST(Host, SettingsModeStillMovesTheCursorWhileGlucoseHolds) {
+    // Holding the knob opens settings whatever is on screen, and inside them
+    // the knob moves the cursor - not the face.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured());
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+
+    holdKnob(host, platform, platform.simulatedClock().monotonicMillis());
+    STIPPLE_REQUIRE(host.navigator().inSettings());
+    detent(host, platform, true);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero"));
+    STIPPLE_CHECK(host.navigator().inSettings());
+}
+
+STIPPLE_TEST(Host, AFaceChangeIsVisibleEvenWhileTheReadingIsStale) {
+    // A stale reading is always drawn as the no-data face, so a detent would
+    // change the setting without changing the panel. Feedback is not
+    // optional: the readout names the face for a moment instead.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    seedConfig(platform, glucoseConfigured());
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_REQUIRE(activeId(host) == "glucose");
+    STIPPLE_REQUIRE(countLit(host.frame()) > 0);
+    const Framebuffer noData = host.frame();
+
+    detent(host, platform, true);
+    STIPPLE_CHECK_FALSE(framesEqual(host.frame(), noData));
+
+    // And it goes away again, leaving the no-data face as before.
+    run(host, platform, platform.simulatedClock().monotonicMillis() + 2000);
+    STIPPLE_CHECK(framesEqual(host.frame(), noData));
+}
+
 STIPPLE_TEST(Host, ADisabledAppStaysDisabledAcrossARestart) {
     stipple::platform::simulator::SimulatorCapabilities capabilities;
     capabilities.power = true;

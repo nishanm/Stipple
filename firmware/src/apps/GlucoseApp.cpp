@@ -355,6 +355,16 @@ GlucoseFace glucoseFaceAt(int index) noexcept {
     }
 }
 
+GlucoseFace glucoseFaceStep(GlucoseFace face, int direction) noexcept {
+    const int index = static_cast<int>(face);
+    if (index >= kGlucoseSelectableFaceCount) {
+        return GlucoseFace::Hero;
+    }
+    const int step = direction < 0 ? -1 : 1;
+    const int next = (index + step + kGlucoseSelectableFaceCount) % kGlucoseSelectableFaceCount;
+    return glucoseFaceAt(next);
+}
+
 Rgb glucoseBandColor(int sgv) noexcept {
     switch (glucose::band(sgv)) {
         case glucose::Band::Warning: return kYellow;

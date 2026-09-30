@@ -718,6 +718,18 @@
             </p>
         </div>
         <div class="field">
+            <label for="glucose-pinned">Keep on screen</label>
+            <label class="switch">
+                <input type="checkbox" id="glucose-pinned" data-setting="glucose.pinned">
+                <span>Pinned</span>
+            </label>
+            <p class="help">
+                While a source is set, the glucose app stays on screen and the
+                carousel stops rotating; the knob then moves between its faces.
+                The middle button still leaves, and the carousel comes back to it.
+            </p>
+        </div>
+        <div class="field">
             <label for="glucose-apiSecret">API secret</label>
             <input type="password" id="glucose-apiSecret" maxlength="128" autocomplete="new-password">
             <p class="help" id="glucose-apiSecret-help">Not set.</p>

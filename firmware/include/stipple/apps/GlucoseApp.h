@@ -37,9 +37,17 @@ enum class GlucoseFace : std::uint8_t {
 
 inline constexpr int kGlucoseFaceCount = 6;
 
+/// The faces a person may choose. NoData is what a stale reading is drawn
+/// as, not a choice, so the knob never lands on it.
+inline constexpr int kGlucoseSelectableFaceCount = 5;
+
 GlucoseFace glucoseFaceFromName(std::string_view name) noexcept;
 const char* glucoseFaceName(GlucoseFace face) noexcept;
 GlucoseFace glucoseFaceAt(int index) noexcept;
+
+/// The next (+1) or previous (-1) selectable face, wrapping. Any other step
+/// counts as its sign; NoData steps to Hero.
+GlucoseFace glucoseFaceStep(GlucoseFace face, int direction) noexcept;
 
 /// FastLED `scale8` with `FASTLED_SCALE8_FIXED`: `(c * (factor + 1)) >> 8`.
 ///

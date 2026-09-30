@@ -310,6 +310,12 @@ struct GlucoseSettings {
     /// Which face to show while a reading is fresh, by name (GlucoseFace).
     /// A stale reading shows the no-data face whatever this says.
     std::string face = "hero";
+
+    /// Keep the glucose app on screen while a source is configured, and let
+    /// the knob move between its faces instead of between apps. The middle
+    /// button still leaves; the carousel comes back to it and holds again.
+    /// Off, the app takes its turn in the rotation like any other.
+    bool pinned = true;
 };
 
 /// Who may talk to this device (ADR 0018).

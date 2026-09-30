@@ -200,6 +200,7 @@ void writeSettings(JsonWriter& writer, const config::Config& settings) {
         .member("apiSecretSet", !settings.glucose.apiSecretSha1.empty())
         .member("pollSeconds", static_cast<std::int64_t>(settings.glucose.pollSeconds))
         .member("face", settings.glucose.face)
+        .member("pinned", settings.glucose.pinned)
         .endObject()
         .endObject();
 }
@@ -1886,6 +1887,12 @@ Response ApiServer::handleSettings(const Request& request) {
                 return unprocessable("'glucose.face' is not a known face");
             }
             updated.glucose.face = name;
+        }
+        if (const json::Value value = glucose["pinned"]; value.valid()) {
+            if (!value.isBoolean()) {
+                return unprocessable("'glucose.pinned' must be true or false");
+            }
+            updated.glucose.pinned = value.toBool(true);
         }
     }
 

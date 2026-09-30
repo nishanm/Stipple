@@ -363,6 +363,22 @@ private:
     /// when the settings changed instead.
     void persistAppOrderIfChanged();
 
+    /// Whether the glucose app should hold the screen: pinned in settings and
+    /// a source configured. An unconfigured device keeps the carousel.
+    bool glucoseHoldWanted() const noexcept;
+
+    /// Pin the glucose app while it is the one showing and the hold is wanted;
+    /// release the pin when the hold stops being wanted. Runs right after the
+    /// carousel tick, so the tick that lands on glucose is the tick that pins it.
+    void applyGlucoseHold(std::uint64_t nowMillis);
+
+    /// Save a face chosen with the knob once the knob has been still for two
+    /// seconds: one flash write per decision rather than one per detent.
+    void persistGlucoseFaceIfChanged();
+
+    /// Step the glucose face from the knob and show what happened.
+    void stepGlucoseFace(int direction);
+
     /// Copy the registry's current order back into settings, ready to persist.
     void rememberAppOrder();
 
@@ -464,6 +480,15 @@ private:
     /// changed" and not "what", and − / + reach two different things depending
     /// on whether this device has a speaker.
     bool adjustmentIsVolume_ = false;
+
+    /// The readout is naming a glucose face rather than a level. Shown only
+    /// when the face itself cannot be seen - a stale reading always draws the
+    /// no-data face, and a knob turn with nothing visible is a broken knob.
+    bool adjustmentIsFace_ = false;
+
+    /// When the knob last changed the glucose face, or 0 once it is saved.
+    std::uint64_t glucoseFaceDirtyMillis_ = 0;
+    static constexpr std::uint64_t kGlucoseFaceSaveDelayMillis = 2000;
 
     /// Sequence of the notification already announced, so a sound plays once
     /// when it appears rather than on every frame it is showing.

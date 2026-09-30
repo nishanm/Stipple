@@ -15,9 +15,9 @@ same faces on a host and pushes them to the stock Ulanzi firmware. That
 renderer is the reference: the faces here are a port of its `faces.py`, and the
 test suite holds them **byte-identical** to its golden corpus.
 
-Stage 1 was faces only; Stage 2 added the Nightscout source and its settings.
-The urgent-low alarm, knob face switching with persistence, and the rest of the
-settings page are later stages, each scoped on its own.
+Stage 1 was faces only; Stage 2 added the Nightscout source and its settings;
+Stage 3 made the display a mode the knob works inside. The urgent-low alarm
+and the rest of the settings page are later stages, each scoped on its own.
 
 ## Decisions
 
@@ -122,6 +122,41 @@ source waits for SNTP and shows the no-data face until then.
 **Stale shows the no-data face.** Whatever face is chosen, a reading older
 than twenty minutes is drawn as the explicit no-data face (the reference's
 rule): a grey `---` on the hero face reads as a value that is merely dim.
+
+## Stage 3: the knob owns the faces
+
+A glucose display that the carousel rotates away from is a demo. While a source
+is configured and `glucose.pinned` is on (the default), the host pins the app
+with the carousel's own `pin()` whenever the carousel is showing it, and a knob
+detent steps the face instead of the app.
+
+### Decisions
+
+**This is the controls rule applied, not bent.** DESIGN.md: "Turn the knob to
+move between things ... The mode changes what a control applies *to*, never
+what it means." In the glucose mode the things are faces. Press, hold, − / +
+and the middle button keep exactly their meanings.
+
+**No mode is a trap.** The pin does not chase the user. `Back` (the middle
+button) still activates the clock, which clears the pin; the carousel then
+rotates through everything and re-pins glucose only when it is showing it
+again. If the clock cannot be activated - disabled, or not installed - `Back`
+unpins and moves to the next app instead, so there is always a way out. The
+API's `activate` behaves the same way.
+
+**One detent, one face.** The mapper's acceleration is ignored, as it is for
+apps, and `NoData` is never in the cycle: it is what a stale reading is drawn
+as, not a choice.
+
+**Feedback while stale.** A stale reading always draws the no-data face, so a
+detent would change the setting invisibly. When that is the case the change is
+named on the adjustment readout (`FACE` / `DELTA`), the same two-line overlay
+− / + use for a level. Fixing that exposed a general bug: nothing repainted the
+panel when a readout expired, which the clock's per-second redraw had hidden.
+
+**Persisted, but not per detent.** The face is saved once the knob has been
+still for two seconds - one flash write per decision. The API's PATCH saves
+itself, so a knob change is also carried by any later PATCH.
 
 ## The golden gate
 
