@@ -102,23 +102,26 @@ void trendMark(Canvas& canvas, int x, int y, Trend trend, Rgb color, int w, int 
     }
 
     if (slope == 1 || slope == -1) {
-        // 2x2 blocks along the diagonal. The run is one shorter than the box in
-        // both axes or it spills a corner.
-        const int span = std::min(w - 1, h - 1);
-        for (int i = 0; i < span; ++i) {
-            const int yy = slope > 0 ? y + (h - 2 - i) : y + i;
+        // A compact arrow, not a bracket that fills the box: a 2x2-block
+        // diagonal shaft ending at the tip and a thin L-shaped head, sized to
+        // the shorter side of the box and centred. A 45-degree line cannot
+        // fill a box taller than it is wide, and the bar-and-stroke that used
+        // to bridge the gap made "107" with a rising mark read as "1077".
+        const int size = std::min(w, h);
+        const int y0 = y + (h - size) / 2;
+        const bool up = slope > 0;
+        for (int i = 0; i < size - 1; ++i) {
+            const int yy = up ? y0 + size - 2 - i : y0 + i;
             fill(canvas, x + i, yy, 2, 2, color);
         }
-        const int headY = slope > 0 ? y : y + h - 2;
-        fill(canvas, x + w - 6, headY, 6, 2, color);
-        // The stroke stretches to meet the last block rather than floating at a
-        // fixed length - a box far taller than wide caps span at w - 1 and a
-        // six-pixel stroke would stop rows short of it.
-        const int lastYY = slope > 0 ? y + (h - 1 - span) : y + span - 1;
-        const int reach = std::abs(lastYY - headY) + 2;
-        const int strokeLength = std::max(6, reach);
-        const int strokeY = slope > 0 ? headY : headY - strokeLength + 2;
-        fill(canvas, x + w - 2, strokeY, 2, strokeLength, color);
+        const int head = std::max(3, size / 2 + 1);
+        if (up) {
+            fill(canvas, x + size - head, y0, head, 1, color);
+            fill(canvas, x + size - 1, y0, 1, head, color);
+        } else {
+            fill(canvas, x + size - head, y0 + size - 1, head, 1, color);
+            fill(canvas, x + size - 1, y0 + size - head, 1, head, color);
+        }
         return;
     }
 
