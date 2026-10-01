@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "stipple/host/ApplicationHost.h"
 
+#include "stipple/config/GlucoseFaceSettings.h"
+
 #include "stipple/api/BasicAuth.h"
 
 #include <cstdio>
@@ -1037,8 +1039,12 @@ void ApplicationHost::applyBrightness() {
     // whatever it was dimmed to. Which is also why brightness is pushed from
     // here rather than written straight to the display when the setting
     // changes - there are now two things that decide it.
-    std::uint8_t wanted = nightModeActive() ? settings_.display.night.brightness
-                                            : settings_.display.brightness;
+    // The schedule's brightness, while a row sets one, stands in for the
+    // panel's own setting - and night dimming still sits on top of both.
+    const std::uint8_t daytime = scheduleBrightness_ >= 0
+                                     ? static_cast<std::uint8_t>(scheduleBrightness_)
+                                     : settings_.display.brightness;
+    std::uint8_t wanted = nightModeActive() ? settings_.display.night.brightness : daytime;
     if (glucoseAlarm_.sounding() && wanted < kAlarmBrightnessFloor) {
         wanted = kAlarmBrightnessFloor;
     }
@@ -1181,9 +1187,20 @@ void ApplicationHost::applyGlucoseHold(std::uint64_t nowMillis) {
 }
 
 void ApplicationHost::stepGlucoseFace(int direction) {
-    const apps::GlucoseFace current = apps::glucoseFaceFromName(settings_.glucose.face);
-    settings_.glucose.face = apps::glucoseFaceName(apps::glucoseFaceStep(current, direction));
-    glucoseFaceDirtyMillis_ = lastTickMillis_ == 0 ? 1 : lastTickMillis_;
+    const apps::glucose::FaceMask mask = config::faceMaskOf(settings_.glucose);
+    glucoseFaceShown_ = apps::glucose::stepActiveFace(mask, glucoseFaceShown_, direction);
+    // The knob restarts the cycling clock, so a face somebody chose is on
+    // screen for a full interval rather than whatever was left of the last.
+    glucoseCycleMillis_ = lastTickMillis_ == 0 ? 1 : lastTickMillis_;
+    // With neither cycling nor the schedule running, the face the knob lands on
+    // is the face - it becomes the default and survives a restart, as it
+    // always has. With either running, the knob changes what is showing for
+    // now and the plan takes over again at its next step; writing flash for
+    // that would be one write per detent for a choice that is meant to pass.
+    if (!glucoseFacePlanRunning()) {
+        settings_.glucose.face = apps::glucoseFaceName(glucoseFaceShown_);
+        glucoseFaceDirtyMillis_ = lastTickMillis_ == 0 ? 1 : lastTickMillis_;
+    }
     // A stale reading draws the no-data face whatever was chosen, so the
     // change would be invisible - and a knob that changes nothing you can see
     // is a broken knob. Name the face instead, the way − / + name a level.
@@ -1194,6 +1211,70 @@ void ApplicationHost::stepGlucoseFace(int direction) {
         adjustmentIsSnooze_ = false;
     }
     scheduler_.invalidate();
+}
+
+bool ApplicationHost::glucoseFacePlanRunning() const noexcept {
+    const config::GlucoseSettings& g = settings_.glucose;
+    if (g.schedule.enabled && !g.schedule.rows.empty()) {
+        return true;
+    }
+    return g.cycleSeconds > 0 && apps::glucose::activeFaceCount(config::faceMaskOf(g)) >= 2;
+}
+
+void ApplicationHost::updateGlucoseFace(std::uint64_t nowMillis) {
+    const config::GlucoseSettings& g = settings_.glucose;
+    const apps::glucose::FaceMask mask = config::faceMaskOf(g);
+    const apps::GlucoseFace before = glucoseFaceShown_;
+    int scheduleBrightness = -1;
+
+    const platform::ISystemClock& clock = platform_.clock();
+    if (g.schedule.enabled && !g.schedule.rows.empty() && clock.wallClockValid()) {
+        // The schedule wins over cycling, as on the TC001: one plan at a time.
+        apps::glucose::ScheduleRow rows[apps::glucose::kMaxScheduleRows];
+        const std::size_t count =
+            config::scheduleRowsOf(g, rows, apps::glucose::kMaxScheduleRows);
+        int weekday = 0;
+        int minutes = 0;
+        apps::glucose::localDayAndMinute(clock.unixSeconds(), currentUtcOffsetSeconds(), weekday,
+                                         minutes);
+        const int row = apps::glucose::scheduleRowAt(rows, count, minutes);
+        if (row >= 0) {
+            // Applied when the row *changes*, so the knob can still move the
+            // face in between and is not undone on the next tick.
+            if (row != glucoseScheduleRow_) {
+                glucoseScheduleRow_ = row;
+                glucoseFaceShown_ =
+                    apps::glucose::activeOrFirst(mask, rows[static_cast<std::size_t>(row)].face);
+            }
+            scheduleBrightness = rows[static_cast<std::size_t>(row)].brightness;
+        }
+    } else {
+        glucoseScheduleRow_ = -1;
+        if (g.cycleSeconds > 0 && apps::glucose::activeFaceCount(mask) >= 2) {
+            if (glucoseCycleMillis_ == 0 || nowMillis < glucoseCycleMillis_) {
+                // Cycling has just started: it starts from the default face.
+                glucoseCycleMillis_ = nowMillis == 0 ? 1 : nowMillis;
+                glucoseFaceShown_ = apps::glucoseFaceFromName(g.face);
+            } else if (nowMillis - glucoseCycleMillis_ >=
+                       static_cast<std::uint64_t>(g.cycleSeconds) * 1000u) {
+                glucoseCycleMillis_ = nowMillis;
+                glucoseFaceShown_ = apps::glucose::stepActiveFace(mask, glucoseFaceShown_, 1);
+            }
+        } else {
+            glucoseCycleMillis_ = 0;
+            // No plan: the panel shows the default face, so a PATCH of
+            // `face` is seen at once and the knob's choice is the setting.
+            glucoseFaceShown_ = apps::glucoseFaceFromName(g.face);
+        }
+    }
+
+    // Whatever happened above, never show a face that is not in use - the set
+    // can shrink under a running plan.
+    glucoseFaceShown_ = apps::glucose::activeOrFirst(mask, glucoseFaceShown_);
+    scheduleBrightness_ = scheduleBrightness;
+    if (glucoseFaceShown_ != before) {
+        scheduler_.invalidate();
+    }
 }
 
 void ApplicationHost::tickGlucoseAlarm(std::uint64_t nowMillis) {
@@ -1651,7 +1732,7 @@ void ApplicationHost::renderAdjustment(Canvas& canvas) const {
         // Short words, because eight 5x7 glyphs is the width of the panel and
         // "hero-delta" is ten. Enough to tell the faces apart by name.
         const char* word = "HERO";
-        switch (apps::glucoseFaceFromName(settings_.glucose.face)) {
+        switch (glucoseFaceShown_) {
             case apps::GlucoseFace::HeroDelta: word = "DELTA"; break;
             case apps::GlucoseFace::HeroGraph: word = "GRAPH"; break;
             case apps::GlucoseFace::Clock: word = "CLOCK"; break;
@@ -1710,6 +1791,7 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
     persistGlucoseFaceIfChanged();
     applyCarouselSettings();
     applyTimeSettings();
+    updateGlucoseFace(nowMillis);
     applyBrightness();
     // Settings reach the host by being written into settings_, so the source
     // is re-told every tick; configure() only acts on a change.
@@ -2258,8 +2340,7 @@ void ApplicationHost::renderFrame(std::uint64_t nowMillis) {
         (!settings_.display.power || notifications_.active() != nullptr)) {
         const apps::glucose::Reading& reading = glucoseSource_.reading();
         apps::renderGlucose(canvas, reading,
-                            reading.stale() ? apps::GlucoseFace::NoData
-                                            : apps::glucoseFaceFromName(settings_.glucose.face));
+                            reading.stale() ? apps::GlucoseFace::NoData : glucoseFaceShown_);
         return;
     }
 
@@ -2329,7 +2410,7 @@ void ApplicationHost::renderFrame(std::uint64_t nowMillis) {
             const apps::glucose::Reading& reading = glucoseSource_.reading();
             apps::renderGlucose(canvas, reading,
                                 reading.stale() ? apps::GlucoseFace::NoData
-                                                : apps::glucoseFaceFromName(settings_.glucose.face));
+                                                : glucoseFaceShown_);
             return;
         }
         case app::Builtin::TestPattern:

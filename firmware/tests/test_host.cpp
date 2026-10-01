@@ -2662,3 +2662,103 @@ STIPPLE_TEST(Host, RestoringAnOrderThatActuallyMovesThingsKeepsEachDuration) {
     STIPPLE_CHECK_EQ(host.apps().indexOf("battery"), 0);
     STIPPLE_CHECK_EQ(host.apps().indexOf("stopwatch"), 1);
 }
+
+// --- glucose faces: the set in use, cycling and the schedule ------------------
+
+STIPPLE_TEST(Host, TheKnobMovesOnlyBetweenFacesInUse) {
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    stipple::config::Config saved = glucoseConfigured();
+    saved.glucose.faces = {"hero", "clock"};
+    saved.glucose.face = "hero";
+    seedConfig(platform, saved);
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_REQUIRE(activeId(host) == "glucose");
+
+    detent(host, platform, true);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Clock);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("clock"));
+    detent(host, platform, true);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Hero);
+    detent(host, platform, false);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Clock);
+}
+
+STIPPLE_TEST(Host, CyclingStepsThroughTheFacesInUseWithoutWritingTheDefault) {
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    stipple::config::Config saved = glucoseConfigured();
+    saved.glucose.faces = {"hero", "hero-graph", "clock"};
+    saved.glucose.face = "hero";
+    saved.glucose.cycleSeconds = 10;
+    seedConfig(platform, saved);
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Hero);
+
+    run(host, platform, 10'500);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::HeroGraph);
+    run(host, platform, 20'500);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Clock);
+    run(host, platform, 30'500);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Hero);
+    // The default stays the default: cycling is not a choice to persist.
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero"));
+
+    // The knob moves the face for now and restarts the interval; the default
+    // is still not rewritten.
+    detent(host, platform, true);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::HeroGraph);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero"));
+    const std::uint64_t turned = platform.simulatedClock().monotonicMillis();
+    run(host, platform, turned + 9'000);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::HeroGraph);
+    run(host, platform, turned + 10'500);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Clock);
+}
+
+STIPPLE_TEST(Host, TheScheduleSetsFaceAndBrightnessAndTheKnobStillWorks) {
+    // 1'700'000'000 is 22:13 UTC, inside the evening row.
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    stipple::config::Config saved = glucoseConfigured();
+    saved.glucose.face = "hero";
+    saved.glucose.cycleSeconds = 10;  // the schedule wins over cycling
+    saved.glucose.schedule.enabled = true;
+    saved.glucose.schedule.rows = {{7 * 60, "hero", 200}, {22 * 60, "clock", 8}};
+    seedConfig(platform, saved);
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Clock);
+    STIPPLE_CHECK_EQ(static_cast<int>(platform.simulatedDisplay().brightness()), 8);
+
+    run(host, platform, 30'000);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::Clock);
+
+    // The knob changes the face in between rows, and the schedule leaves it.
+    detent(host, platform, true);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::BigGraph);
+    run(host, platform, platform.simulatedClock().monotonicMillis() + 60'000);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::BigGraph);
+    STIPPLE_CHECK_EQ(host.settings().glucose.face, std::string("hero"));
+}
+
+STIPPLE_TEST(Host, ARowWithoutBrightnessLeavesThePanelSetting) {
+    SimulatorPlatform platform;
+    platform.simulatedClock().setWallClock(1'700'000'000);
+    stipple::config::Config saved = glucoseConfigured();
+    saved.display.brightness = 99;
+    saved.glucose.schedule.enabled = true;
+    saved.glucose.schedule.rows = {{22 * 60, "big-graph", -1}};
+    seedConfig(platform, saved);
+    ApplicationHost host(platform, quietConfig());
+    host.initialize();
+    run(host, platform, 200);
+    STIPPLE_CHECK(host.glucoseFaceShown() == stipple::apps::GlucoseFace::BigGraph);
+    STIPPLE_CHECK_EQ(static_cast<int>(platform.simulatedDisplay().brightness()), 99);
+}

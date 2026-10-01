@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "stipple/config/Config.h"
 
+#include "stipple/config/GlucoseFaceSettings.h"
+
 #include "stipple/core/Checksum.h"
 #include "stipple/core/Rgb.h"
 #include "stipple/json/Json.h"
@@ -265,8 +267,8 @@ std::string buildBody(const Config& config) {
     appendEscaped(body, config.glucose.apiSecretSha1);
     body += ",\"pollSeconds\":";
     body += std::to_string(config.glucose.pollSeconds);
-    body += ",\"face\":";
-    appendEscaped(body, config.glucose.face);
+    body += ',';
+    body += glucoseFaceMembersJson(config.glucose);
     body += ",\"pinned\":";
     body += config.glucose.pinned ? "true" : "false";
     body += ",\"alarms\":";
@@ -461,6 +463,7 @@ bool ConfigStore::deserialize(std::string_view payload,
     parsed.glucose.pollSeconds =
         clampPollSeconds(glucose["pollSeconds"].toInt(parsed.glucose.pollSeconds));
     parsed.glucose.face = glucose["face"].toString(parsed.glucose.face);
+    loadGlucoseFaceSettings(glucose, parsed.glucose);
     parsed.glucose.pinned = glucose["pinned"].toBool(parsed.glucose.pinned);
     // Forgiving, like the rest of this function: an alarm that fails today's
     // rules comes back as its default, never as silence and never as a load

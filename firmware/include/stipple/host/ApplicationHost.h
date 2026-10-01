@@ -11,6 +11,7 @@
 #include "stipple/script/IScriptRunner.h"
 #include "stipple/apps/ClockApp.h"
 #include "stipple/apps/GlucoseAlarm.h"
+#include "stipple/apps/GlucoseApp.h"
 #include "stipple/apps/GlucoseSource.h"
 #include "stipple/audio/SharedSpeaker.h"
 #include "stipple/apps/VisualizerApp.h"
@@ -168,6 +169,10 @@ public:
     void setScriptRunner(script::IScriptRunner* runner);
     script::IScriptRunner* scriptRunner() const noexcept { return scripts_; }
     config::Config& settings() noexcept { return settings_; }
+
+    /// The glucose face on the panel right now - the default, or wherever
+    /// cycling, the schedule or the knob has moved it.
+    apps::GlucoseFace glucoseFaceShown() const noexcept { return glucoseFaceShown_; }
 
     /// The glucose alarm, for diagnostics and tests.
     const apps::glucose::GlucoseAlarm& glucoseAlarm() const noexcept { return glucoseAlarm_; }
@@ -395,6 +400,14 @@ private:
     /// Step the glucose face from the knob and show what happened.
     void stepGlucoseFace(int direction);
 
+    /// Whether cycling or the schedule is choosing the face, rather than the
+    /// default face standing.
+    bool glucoseFacePlanRunning() const noexcept;
+
+    /// Decide which glucose face is showing this tick - default, cycling or
+    /// schedule - and the schedule's brightness, if any.
+    void updateGlucoseFace(std::uint64_t nowMillis);
+
     /// Run the glucose alarm for this tick: decide, play, take the screen.
     void tickGlucoseAlarm(std::uint64_t nowMillis);
 
@@ -542,6 +555,18 @@ private:
 
     /// When the knob last changed the glucose face, or 0 once it is saved.
     std::uint64_t glucoseFaceDirtyMillis_ = 0;
+
+    /// The face on the panel, which is the default face unless cycling or the
+    /// schedule has moved it. Runtime only; the default is in settings_.
+    apps::GlucoseFace glucoseFaceShown_ = apps::GlucoseFace::Hero;
+    /// When the face last changed by cycling (or by the knob, which restarts
+    /// the interval). 0 when cycling is off.
+    std::uint64_t glucoseCycleMillis_ = 0;
+    /// The schedule row in force, -1 for none, so a row is applied once on
+    /// entry rather than every tick.
+    int glucoseScheduleRow_ = -1;
+    /// The schedule row's brightness, or -1 to use the display setting.
+    int scheduleBrightness_ = -1;
     static constexpr std::uint64_t kGlucoseFaceSaveDelayMillis = 2000;
 
     /// Sequence of the notification already announced, so a sound plays once

@@ -55,6 +55,10 @@ public:
     }
     JsonWriter& member(std::string_view name, bool flag);
     JsonWriter& rawMember(std::string_view name, std::string_view json);
+    /// Splice already-valid `"key":value,...` members into the open object,
+    /// for a block whose shape is owned by another module (the stored file
+    /// and the API must write it identically).
+    JsonWriter& rawMembers(std::string_view members);
 
     std::string take() { return std::move(out_); }
     const std::string& str() const { return out_; }

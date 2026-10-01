@@ -136,5 +136,14 @@ JsonWriter& JsonWriter::rawMember(std::string_view name, std::string_view json) 
     return key(name).rawValue(json);
 }
 
+JsonWriter& JsonWriter::rawMembers(std::string_view members) {
+    if (members.empty()) {
+        return *this;
+    }
+    separate();
+    out_.append(members);
+    return *this;
+}
+
 }  // namespace api
 }  // namespace stipple

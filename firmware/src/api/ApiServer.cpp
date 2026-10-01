@@ -28,6 +28,7 @@
 #include "stipple/apps/GlucoseSource.h"
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/config/Config.h"
+#include "stipple/config/GlucoseFaceSettings.h"
 #include "stipple/core/Sha1.h"
 #include "stipple/net/HttpFetch.h"
 #include "stipple/core/Log.h"
@@ -214,7 +215,7 @@ void writeSettings(JsonWriter& writer, const config::Config& settings) {
         // whether one is set (§22, the MQTT password rule).
         .member("apiSecretSet", !settings.glucose.apiSecretSha1.empty())
         .member("pollSeconds", static_cast<std::int64_t>(settings.glucose.pollSeconds))
-        .member("face", settings.glucose.face)
+        .rawMembers(config::glucoseFaceMembersJson(settings.glucose))
         .member("pinned", settings.glucose.pinned)
         .rawMember("alarms", config::alarmSettingsJson(settings.glucose.alarms))
         .endObject()
@@ -2186,12 +2187,14 @@ Response ApiServer::handleSettings(const Request& request) {
             }
             updated.glucose.pollSeconds = static_cast<int>(seconds);
         }
-        if (const json::Value value = glucose["face"]; value.isString()) {
-            const std::string name = value.toString();
-            if (apps::glucoseFaceName(apps::glucoseFaceFromName(name)) != name) {
-                return unprocessable("'glucose.face' is not a known face");
+        // Face, faces, cycling and schedule are one block with cross-field
+        // rules (the default must be in use, cycling needs two faces...), so
+        // they are applied and checked together.
+        {
+            std::string error;
+            if (!config::applyGlucoseFaceSettings(glucose, updated.glucose, error)) {
+                return unprocessable(error);
             }
-            updated.glucose.face = name;
         }
         if (const json::Value value = glucose["pinned"]; value.valid()) {
             if (!value.isBoolean()) {

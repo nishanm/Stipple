@@ -205,6 +205,7 @@ add_library(stipple_core
     src/apps/BatteryApp.cpp
     src/apps/ClockApp.cpp
     src/apps/GlucoseApp.cpp
+    src/apps/GlucoseFacePlan.cpp
     src/apps/GlucoseFont.cpp
     src/apps/GlucoseAlarm.cpp
     src/apps/GlucoseSource.cpp
@@ -220,6 +221,7 @@ add_library(stipple_core
     src/app/Carousel.cpp
     src/config/Config.cpp
     src/config/GlucoseAlarmSettings.cpp
+    src/config/GlucoseFaceSettings.cpp
     src/api/Http.cpp
     src/api/JsonWriter.cpp
     src/api/ApiServer.cpp

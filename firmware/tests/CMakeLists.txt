@@ -28,6 +28,7 @@ add_executable(stipple_tests
     test_melody.cpp
     test_glucose_source.cpp
     test_glucose_settings.cpp
+    test_glucose_faces.cpp
     test_icons.cpp
     test_web.cpp
     test_mqtt.cpp

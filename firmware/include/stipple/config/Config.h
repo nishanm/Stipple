@@ -289,6 +289,22 @@ struct VisualizerSettings {
     std::string style = "meter";
 };
 
+/// One row of the glucose face schedule. See `GlucoseSettings::schedule`.
+struct GlucoseScheduleRow {
+    /// Local minutes after midnight, 0-1439.
+    int minutes = 0;
+    /// A face name, one of `GlucoseSettings::faces`.
+    std::string face = "hero";
+    /// 0-255, or -1 to leave the panel's brightness as it is.
+    int brightness = -1;
+};
+
+struct GlucoseSchedule {
+    bool enabled = false;
+    /// Sorted by `minutes`, no two the same, at most six.
+    std::vector<GlucoseScheduleRow> rows;
+};
+
 /// The glucose app's data source and face.
 ///
 /// No default for the URL and none for the credential: this repository is
@@ -309,8 +325,26 @@ struct GlucoseSettings {
     int pollSeconds = 60;
 
     /// Which face to show while a reading is fresh, by name (GlucoseFace).
-    /// A stale reading shows the no-data face whatever this says.
+    /// A stale reading shows the no-data face whatever this says. Always one
+    /// of `faces`: the default face is the face the panel rests on when
+    /// neither cycling nor the schedule says otherwise.
     std::string face = "hero";
+
+    /// The faces in use, by name, in the canonical order. The knob moves only
+    /// between these and cycling runs through them. Never empty: a load that
+    /// finds none restores all five, because a clock with no face is a blank
+    /// panel in a child's bedroom.
+    std::vector<std::string> faces = {"hero", "hero-delta", "hero-graph", "clock", "big-graph"};
+
+    /// Seconds between automatic face changes, or 0 for off. One of 0, 10,
+    /// 30, 60, 120, 180, 300. Needs at least two faces in use, and gives way to
+    /// the schedule while that is on.
+    int cycleSeconds = 0;
+
+    /// The daily schedule: from each row's time the panel shows that row's
+    /// face at its brightness until the next row; the last row runs overnight.
+    /// The knob still changes the face in between.
+    GlucoseSchedule schedule;
 
     /// Keep the glucose app on screen while a source is configured, and let
     /// the knob move between its faces instead of between apps. The middle
