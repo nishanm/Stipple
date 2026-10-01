@@ -158,6 +158,11 @@ enum class Resource : std::uint8_t {
     /// list drifts the moment the list changes, and a caller guessing at
     /// names gets a 422 it could have avoided by asking.
     Sound,
+    /// Remember a network to fall back to, without leaving this one.
+    /// POST /api/v1/network/remember.
+    NetworkRemember,
+    /// Forget a remembered network. POST /api/v1/network/forget.
+    NetworkForget,
 };
 
 struct RouteMatch {

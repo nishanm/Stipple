@@ -268,3 +268,30 @@ STIPPLE_TEST(GlucoseSettings, AnUnknownStoredSourceLoadsAsNightscout) {
     STIPPLE_CHECK_EQ(read.glucose.source, std::string("nightscout"));
     STIPPLE_CHECK_EQ(read.glucose.dexcomServer, std::string("us"));
 }
+
+// --- a second network: remembered without switching to it ------------------------
+
+STIPPLE_TEST(GlucoseSettings, ASecondNetworkIsRememberedAndForgottenButNeverTheOneInUse) {
+    Fixture fixture;
+    auto& network = fixture.platform.simulatedNetwork();
+    network.setRememberable(true);
+    network.setRemembered({{"Home", true}});
+
+    STIPPLE_CHECK_EQ(fixture.call("POST", "/api/v1/network/remember",
+                                  R"({"ssid":"Grandma","password":"not-a-real-pass"})").status,
+                     200);
+    const std::string listed = fixture.call("GET", "/api/v1/network").body;
+    STIPPLE_CHECK(contains(listed, R"({"ssid":"Grandma","current":false})"));
+    STIPPLE_CHECK(contains(listed, R"({"ssid":"Home","current":true})"));
+    STIPPLE_CHECK_FALSE(contains(listed, "not-a-real-pass"));
+
+    STIPPLE_CHECK_EQ(fixture.call("POST", "/api/v1/network/forget", R"({"ssid":"Home"})").status, 422);
+    STIPPLE_CHECK_EQ(fixture.call("POST", "/api/v1/network/forget", R"({"ssid":"Grandma"})").status, 200);
+    STIPPLE_CHECK_FALSE(contains(fixture.call("GET", "/api/v1/network").body, "Grandma"));
+    STIPPLE_CHECK_EQ(fixture.call("POST", "/api/v1/network/forget", R"({"ssid":"Grandma"})").status, 422);
+}
+
+STIPPLE_TEST(GlucoseSettings, RememberingNeedsAConnection) {
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(fixture.call("POST", "/api/v1/network/remember", R"({"ssid":"x"})").status, 409);
+}

@@ -261,6 +261,47 @@ inline std::vector<int> networkIdsForSsid(std::string_view reply, std::string_vi
     return ids;
 }
 
+/// Every network block in a LIST_NETWORKS reply: its id, SSID, and whether it
+/// is the one in use ([CURRENT]).
+struct ListedNetwork {
+    int id = -1;
+    std::string ssid;
+    bool current = false;
+};
+
+inline std::vector<ListedNetwork> parseListNetworks(std::string_view reply) {
+    std::vector<ListedNetwork> out;
+    std::size_t line = 0;
+    bool first = true;
+    while (line < reply.size()) {
+        std::size_t end = reply.find('\n', line);
+        if (end == std::string_view::npos) {
+            end = reply.size();
+        }
+        const std::string_view row = reply.substr(line, end - line);
+        line = end + 1;
+        if (first) {
+            first = false;
+            continue;
+        }
+        const std::size_t firstTab = row.find('\t');
+        if (row.empty() || firstTab == std::string_view::npos) {
+            continue;
+        }
+        const std::size_t secondTab = row.find('\t', firstTab + 1);
+        ListedNetwork network;
+        network.id = detail::toInt(row.substr(0, firstTab), -1);
+        network.ssid = std::string(row.substr(
+            firstTab + 1,
+            secondTab == std::string_view::npos ? std::string_view::npos : secondTab - firstTab - 1));
+        network.current = row.find("[CURRENT]") != std::string_view::npos;
+        if (network.id >= 0) {
+            out.push_back(std::move(network));
+        }
+    }
+    return out;
+}
+
 inline bool succeeded(std::string_view reply) noexcept {
     return reply.rfind("OK", 0) == 0;
 }

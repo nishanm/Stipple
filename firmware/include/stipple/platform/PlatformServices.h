@@ -180,6 +180,46 @@ public:
     }
 
     virtual JoinProgress joinProgress() const { return {}; }
+
+    // --- remembered networks -------------------------------------------------
+    //
+    // The TC001 has one network and an "additional" one it falls back to. The
+    // TC002's supplicant already keeps a list and falls back through it on its
+    // own, so the second network here is simply one more remembered entry,
+    // added *without* switching to it: the device stays where it is, and
+    // reaches for the other one when this one is gone.
+
+    /// One network the device will join on its own when it is in range.
+    struct RememberedNetwork {
+        std::string ssid;
+        /// The one in use now.
+        bool current = false;
+    };
+
+    /// At most this many, so the stored list cannot grow without bound.
+    static constexpr std::size_t kMaxRemembered = 5;
+
+    virtual bool canRemember() const { return false; }
+    virtual std::vector<RememberedNetwork> rememberedNetworks() const { return {}; }
+
+    /// Remember a network to fall back to, below the one in use, without
+    /// leaving it. Replaces an entry with the same name. `why` says what
+    /// stopped it, for the person who typed the password.
+    virtual bool rememberNetwork(const std::string& ssid, const std::string& password,
+                                 std::string& why) {
+        (void)ssid;
+        (void)password;
+        why = "this device cannot remember networks";
+        return false;
+    }
+
+    /// Forget one. The network in use cannot be forgotten from here: that is
+    /// how a device ends up reachable by nobody.
+    virtual bool forgetNetwork(const std::string& ssid, std::string& why) {
+        (void)ssid;
+        why = "this device cannot remember networks";
+        return false;
+    }
 };
 
 /// Installing a new STIPPLE, without flashing anything.

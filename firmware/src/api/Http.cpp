@@ -222,6 +222,14 @@ RouteMatch matchRoute(std::string_view path) {
             match.resource = Resource::NetworkJoin;
             return match;
         }
+        if (head == "network" && parts[3] == "remember") {
+            match.resource = Resource::NetworkRemember;
+            return match;
+        }
+        if (head == "network" && parts[3] == "forget") {
+            match.resource = Resource::NetworkForget;
+            return match;
+        }
         if (head == "display" && parts[3] == "frame") {
             match.resource = Resource::DisplayFrame;
             return match;

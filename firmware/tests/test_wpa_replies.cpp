@@ -203,3 +203,18 @@ STIPPLE_TEST(WpaReplies, SurvivesAnEmptyOrHeaderOnlyList) {
     STIPPLE_CHECK(networkIdsForSsid("network id / ssid / bssid / flags\n", "home").empty());
     STIPPLE_CHECK(networkIdsForSsid("FAIL\n", "home").empty());
 }
+
+STIPPLE_TEST(WpaReplies, ListNetworksNamesEachBlockAndTheOneInUse) {
+    const std::string reply =
+        "network id / ssid / bssid / flags\n"
+        "0\tHome\tany\t[CURRENT]\n"
+        "1\tGrandma\tany\t\n"
+        "2\tHome\tany\t[DISABLED]\n";
+    const auto listed = stipple::platform::tc002::wpa::parseListNetworks(reply);
+    STIPPLE_REQUIRE(listed.size() == 3);
+    STIPPLE_CHECK_EQ(listed[0].ssid, std::string("Home"));
+    STIPPLE_CHECK(listed[0].current);
+    STIPPLE_CHECK_EQ(listed[1].id, 1);
+    STIPPLE_CHECK_EQ(listed[1].ssid, std::string("Grandma"));
+    STIPPLE_CHECK_FALSE(listed[1].current);
+}

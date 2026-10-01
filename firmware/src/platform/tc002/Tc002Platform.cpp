@@ -520,6 +520,135 @@ bool Tc002Network::beginJoin(const std::string& ssid, const std::string& passwor
     return true;
 }
 
+// --- remembered networks -----------------------------------------------------
+
+bool Tc002Network::canRemember() const {
+    // Only while the supplicant is running: under the hotspot it is stopped,
+    // and the list is not there to read or write.
+    return connected();
+}
+
+std::vector<INetworkManager::RememberedNetwork> Tc002Network::rememberedNetworks() const {
+    std::vector<RememberedNetwork> out;
+    if (!connected()) {
+        return out;
+    }
+    for (const wpa::ListedNetwork& listed : wpa::parseListNetworks(control_.ask("LIST_NETWORKS"))) {
+        bool seen = false;
+        for (RememberedNetwork& held : out) {
+            if (held.ssid == listed.ssid) {
+                held.current = held.current || listed.current;
+                seen = true;
+            }
+        }
+        if (!seen) {
+            out.push_back({listed.ssid, listed.current});
+        }
+    }
+    return out;
+}
+
+bool Tc002Network::rememberNetwork(const std::string& ssid, const std::string& password,
+                                   std::string& why) {
+    if (!connected()) {
+        why = "join a network first";
+        return false;
+    }
+    if (stage_ != Stage::Idle && stage_ != Stage::Done && stage_ != Stage::Failed) {
+        why = "already joining a network";
+        return false;
+    }
+    std::string problem = wpa::ssidProblem(ssid);
+    if (problem.empty() && !password.empty()) {
+        problem = wpa::passphraseProblem(password);
+    }
+    if (!problem.empty()) {
+        why = problem;
+        return false;
+    }
+    const std::vector<wpa::ListedNetwork> listed =
+        wpa::parseListNetworks(control_.ask("LIST_NETWORKS"));
+    std::size_t others = 0;
+    std::vector<int> stale;
+    for (const wpa::ListedNetwork& network : listed) {
+        if (network.ssid == ssid) {
+            if (network.current) {
+                why = "that is the network in use";
+                return false;
+            }
+            stale.push_back(network.id);
+        } else {
+            ++others;
+        }
+    }
+    if (others >= kMaxRemembered) {
+        why = "five networks are remembered already - forget one first";
+        return false;
+    }
+    std::sort(stale.begin(), stale.end(), std::greater<int>());
+    for (const int old : stale) {
+        control_.ask("REMOVE_NETWORK " + std::to_string(old));
+    }
+
+    const int id = wpa::parseNetworkId(control_.ask("ADD_NETWORK"));
+    if (id < 0) {
+        why = "this device would not accept the network";
+        return false;
+    }
+    bool ok = wpa::succeeded(control_.ask(wpa::setNetworkHex(id, "ssid", ssid)));
+    if (ok && password.empty()) {
+        ok = wpa::succeeded(control_.ask(wpa::setNetworkRaw(id, "key_mgmt", "NONE")));
+    } else if (ok) {
+        ok = wpa::succeeded(control_.ask(wpa::setPassphrase(id, password)));
+    }
+    if (ok) {
+        ok = wpa::succeeded(control_.ask(
+            wpa::setNetworkRaw(id, "priority", std::to_string(wpa::kFallbackPriority))));
+    }
+    // ENABLE, not SELECT: enabling puts it on the list without leaving the
+    // network in use, which is the whole point of a fallback.
+    if (ok) {
+        ok = wpa::succeeded(control_.ask("ENABLE_NETWORK " + std::to_string(id)));
+    }
+    if (!ok) {
+        control_.ask("REMOVE_NETWORK " + std::to_string(id));
+        why = "this device would not accept the network";
+        return false;
+    }
+    if (!wpa::succeeded(control_.ask("SAVE_CONFIG"))) {
+        why = "remembered until restart - the list could not be saved";
+        return false;
+    }
+    return true;
+}
+
+bool Tc002Network::forgetNetwork(const std::string& ssid, std::string& why) {
+    if (!connected()) {
+        why = "join a network first";
+        return false;
+    }
+    std::vector<int> ids;
+    for (const wpa::ListedNetwork& network : wpa::parseListNetworks(control_.ask("LIST_NETWORKS"))) {
+        if (network.ssid == ssid) {
+            if (network.current) {
+                why = "that is the network in use";
+                return false;
+            }
+            ids.push_back(network.id);
+        }
+    }
+    if (ids.empty()) {
+        why = "no network by that name is remembered";
+        return false;
+    }
+    std::sort(ids.begin(), ids.end(), std::greater<int>());
+    for (const int id : ids) {
+        control_.ask("REMOVE_NETWORK " + std::to_string(id));
+    }
+    control_.ask("SAVE_CONFIG");
+    return true;
+}
+
 bool Tc002Network::configureNetwork() {
     // Replace this SSID rather than adding another copy of it.
     //

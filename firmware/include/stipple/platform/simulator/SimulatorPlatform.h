@@ -229,7 +229,59 @@ public:
         networks_ = std::move(networks);
     }
 
+    /// In memory, with the device's rules: bounded, replaces by name, never
+    /// forgets the one in use. Off by default like scanning.
+    bool canRemember() const override { return rememberable_; }
+    void setRememberable(bool rememberable) { rememberable_ = rememberable; }
+    std::vector<RememberedNetwork> rememberedNetworks() const override { return remembered_; }
+    void setRemembered(std::vector<RememberedNetwork> remembered) {
+        remembered_ = std::move(remembered);
+    }
+    bool rememberNetwork(const std::string& ssid, const std::string& password,
+                         std::string& why) override {
+        (void)password;
+        if (!rememberable_) {
+            why = "this device cannot remember networks";
+            return false;
+        }
+        if (ssid.empty() || ssid.size() > 32) {
+            why = "the network name must be 1-32 characters";
+            return false;
+        }
+        for (RememberedNetwork& held : remembered_) {
+            if (held.ssid == ssid) {
+                if (held.current) {
+                    why = "that is the network in use";
+                    return false;
+                }
+                return true;
+            }
+        }
+        if (remembered_.size() >= kMaxRemembered) {
+            why = "five networks are remembered already - forget one first";
+            return false;
+        }
+        remembered_.push_back({ssid, false});
+        return true;
+    }
+    bool forgetNetwork(const std::string& ssid, std::string& why) override {
+        for (std::size_t i = 0; i < remembered_.size(); ++i) {
+            if (remembered_[i].ssid == ssid) {
+                if (remembered_[i].current) {
+                    why = "that is the network in use";
+                    return false;
+                }
+                remembered_.erase(remembered_.begin() + static_cast<std::ptrdiff_t>(i));
+                return true;
+            }
+        }
+        why = "no network by that name is remembered";
+        return false;
+    }
+
 private:
+    std::vector<RememberedNetwork> remembered_;
+    bool rememberable_ = false;
     NetworkStatus status_;
     std::vector<WirelessNetwork> networks_;
     bool scannable_ = false;

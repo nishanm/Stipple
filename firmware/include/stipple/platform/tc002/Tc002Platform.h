@@ -110,6 +110,12 @@ public:
 
     bool canJoin() const override;
     bool beginJoin(const std::string& ssid, const std::string& password) override;
+
+    bool canRemember() const override;
+    std::vector<RememberedNetwork> rememberedNetworks() const override;
+    bool rememberNetwork(const std::string& ssid, const std::string& password,
+                         std::string& why) override;
+    bool forgetNetwork(const std::string& ssid, std::string& why) override;
     JoinProgress joinProgress() const override;
 
     /// Drive the join, once a frame. Nothing here blocks.

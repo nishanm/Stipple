@@ -140,6 +140,10 @@ inline int parseNetworkId(std::string_view reply) {
 /// nobody can reach.
 inline constexpr int kJoinPriority = 100;
 
+/// Below any network joined on purpose, so a remembered fallback is used only
+/// when the chosen one is not there.
+inline constexpr int kFallbackPriority = 10;
+
 }  // namespace wpa
 }  // namespace tc002
 }  // namespace platform

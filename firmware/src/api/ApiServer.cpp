@@ -311,6 +311,8 @@ Response ApiServer::handle(const Request& request, std::uint64_t nowMillis) {
         case Resource::Input: return handleInput(request, nowMillis);
         case Resource::GlucoseAlarmTest: return handleGlucoseAlarmTest(request, nowMillis);
         case Resource::Sound: return handleSound(request);
+        case Resource::NetworkRemember: return handleNetworkRemember(request, true);
+        case Resource::NetworkForget: return handleNetworkRemember(request, false);
         case Resource::Unknown: break;
     }
     return notFound("no such endpoint");
@@ -2446,6 +2448,18 @@ Response ApiServer::handleNetwork(const Request& request) {
             .endObject();
     }
 
+    // The networks it will join on its own, in use or as a fallback. Names
+    // only: what is remembered is never read back with its password.
+    writer.member("canRemember", network.canRemember());
+    writer.key("remembered").beginArray();
+    for (const platform::INetworkManager::RememberedNetwork& held : network.rememberedNetworks()) {
+        writer.beginObject()
+            .member("ssid", held.ssid)
+            .member("current", held.current)
+            .endObject();
+    }
+    writer.endArray();
+
     writer.key("networks").beginArray();
     for (const platform::WirelessNetwork& found : network.networks()) {
         writer.beginObject()
@@ -2484,6 +2498,51 @@ Response ApiServer::handleNetworkScan(const Request& request) {
     Response response = ok(writer.take());
     response.status = 202;
     return response;
+}
+
+Response ApiServer::handleNetworkRemember(const Request& request, bool remember) {
+    if (request.method != Method::Post) {
+        return methodNotAllowed();
+    }
+    if (context_.platform == nullptr || context_.platform->network() == nullptr) {
+        return error(501, "not_supported", "this platform has no network interface");
+    }
+    platform::INetworkManager& network = *context_.platform->network();
+    if (!network.canRemember()) {
+        return error(409, "unavailable",
+                     "networks can be remembered only while connected to one");
+    }
+    Body body(request.body, options_.maxJsonTokens, options_.maxBodyBytes);
+    if (!body.valid()) {
+        return badRequest(std::string("invalid JSON: ") + body.errorText());
+    }
+    const json::Value root = body.root();
+    if (!root.isObject() || !root["ssid"].isString()) {
+        return badRequest("'ssid' is required");
+    }
+    const std::string ssid = root["ssid"].toString();
+    std::string why;
+    bool done = false;
+    if (remember) {
+        const json::Value passwordValue = root["password"];
+        if (passwordValue.valid() && !passwordValue.isNull() && !passwordValue.isString()) {
+            return badRequest("'password' must be a string");
+        }
+        done = network.rememberNetwork(
+            ssid, passwordValue.isString() ? passwordValue.toString() : std::string(), why);
+    } else {
+        done = network.forgetNetwork(ssid, why);
+    }
+    if (!done) {
+        return unprocessable(why);
+    }
+    // The password is not echoed, for the reason handleNetworkJoin gives.
+    JsonWriter writer;
+    writer.beginObject()
+        .member("status", remember ? "remembered" : "forgotten")
+        .member("ssid", ssid)
+        .endObject();
+    return ok(writer.take());
 }
 
 Response ApiServer::handleNetworkJoin(const Request& request) {

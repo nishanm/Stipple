@@ -261,6 +261,7 @@ private:
     Response handleInput(const Request& request, std::uint64_t nowMillis);
     Response handleGlucoseAlarmTest(const Request& request, std::uint64_t nowMillis);
     Response handleSound(const Request& request);
+    Response handleNetworkRemember(const Request& request, bool remember);
 
     ApiContext context_;
     ApiOptions options_;
