@@ -171,6 +171,53 @@ bool headerIsSafe(std::string_view name, std::string_view value) noexcept {
     return true;
 }
 
+bool methodIsSafe(std::string_view method) noexcept {
+    return method == "GET" || method == "POST";
+}
+
+std::string buildRequest(const Url& url, std::string_view userAgent, std::string_view method,
+                         const Header* headers, std::size_t headerCount, std::string_view body) {
+    std::string request;
+    request.reserve(url.target.size() + url.host.size() + userAgent.size() + body.size() + 256);
+    request.append(method.empty() ? std::string_view("GET") : method);
+    request += ' ';
+    request += url.target;
+    request += " HTTP/1.1\r\nHost: ";
+    request += url.host;
+    if ((!url.secure && url.port != 80) || (url.secure && url.port != 443)) {
+        request += ':';
+        request += std::to_string(url.port);
+    }
+    bool agentGiven = false;
+    for (std::size_t i = 0; i < headerCount; ++i) {
+        if (equalsIgnoringCase(headers[i].name, "user-agent")) {
+            agentGiven = true;
+        }
+    }
+    if (!agentGiven) {
+        request += "\r\nUser-Agent: ";
+        request.append(userAgent);
+    }
+    for (std::size_t i = 0; i < headerCount; ++i) {
+        if (headers[i].name.empty()) {
+            continue;
+        }
+        request += "\r\n";
+        request.append(headers[i].name);
+        request += ": ";
+        request.append(headers[i].value);
+    }
+    if (method == "POST") {
+        request += "\r\nContent-Length: ";
+        request += std::to_string(body.size());
+    }
+    request += "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n";
+    if (method == "POST") {
+        request.append(body);
+    }
+    return request;
+}
+
 std::string buildGet(const Url& url, std::string_view userAgent, std::string_view headerName,
                      std::string_view headerValue) {
     std::string request;
@@ -282,6 +329,18 @@ bool ResponseParser::consumeHeader(std::string_view line) {
             }
         }
         contentLength_ = length;
+    } else if (equalsIgnoringCase(name, "set-cookie")) {
+        // Only the name=value pair; the attributes are instructions to a
+        // browser's cookie jar, which this is not.
+        std::string_view pair = value.substr(0, value.find(';'));
+        pair = trim(pair);
+        if (!pair.empty() && pair.find('=') != std::string_view::npos &&
+            response_.cookies.size() + pair.size() + 2 <= kMaxCookieBytes) {
+            if (!response_.cookies.empty()) {
+                response_.cookies += "; ";
+            }
+            response_.cookies.append(pair);
+        }
     } else if (equalsIgnoringCase(name, "transfer-encoding")) {
         if (equalsIgnoringCase(value, "chunked")) {
             response_.chunked = true;

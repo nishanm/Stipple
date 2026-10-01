@@ -51,6 +51,11 @@ bool SimulatorHttpClient::begin(const HttpRequest& request) {
         failure_ = "bad header";
         return false;
     }
+    if (!requestIsSafe(request)) {
+        stage_ = Stage::Failed;
+        failure_ = "bad request";
+        return false;
+    }
 
     ++requests_;
     asked_.emplace_back(url);
@@ -60,7 +65,20 @@ bool SimulatorHttpClient::begin(const HttpRequest& request) {
         header += ": ";
         header.append(request.headerValue);
     }
+    std::string all = header;
+    for (std::size_t i = 0; i < request.headerCount; ++i) {
+        if (!all.empty()) {
+            all += '\n';
+        }
+        all.append(request.headers[i].name);
+        all += ": ";
+        all.append(request.headers[i].value);
+    }
     askedHeaders_.push_back(std::move(header));
+    askedAllHeaders_.push_back(std::move(all));
+    askedMethods_.emplace_back(request.method);
+    askedBodies_.emplace_back(request.body);
+    pendingCookie_.clear();
     maxBodyBytes_ = request.maxBodyBytes;
     truncated_ = false;
 
@@ -94,6 +112,7 @@ bool SimulatorHttpClient::begin(const HttpRequest& request) {
 
     pendingStatus_ = route->status;
     pendingBody_ = route->body;
+    pendingCookie_ = route->setCookie;
     pendingFailure_ = route->failure;
     hanging_ = route->hang;
     readyAtMillis_ = 0;
@@ -126,6 +145,7 @@ void SimulatorHttpClient::poll(std::uint64_t nowMillis) {
     }
 
     status_ = pendingStatus_;
+    cookies_ = pendingCookie_;
     if (pendingBody_.size() > maxBodyBytes_) {
         body_ = pendingBody_.substr(0, maxBodyBytes_);
         truncated_ = true;
@@ -140,6 +160,7 @@ void SimulatorHttpClient::reset() {
     stage_ = Stage::Idle;
     status_ = 0;
     body_.clear();
+    cookies_.clear();
     failure_.clear();
     readyAtMillis_ = 0;
     hanging_ = false;

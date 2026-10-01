@@ -321,8 +321,33 @@ struct GlucoseSettings {
     /// password; the API reports whether one is set and nothing else.
     std::string apiSecretSha1;
 
-    /// Seconds between fetches. Clamped to 30..600 on load and on write.
+    /// Seconds between fetches. Clamped to 30..600 on load and on write. The
+    /// cloud services are asked at most once a minute whatever this says.
     int pollSeconds = 60;
+
+    /// Which service the readings come from: "nightscout", "dexcom",
+    /// "librelinkup" or "medtrum" - the TC001's names. Each one's settings are
+    /// kept while another is chosen, so switching back needs no retyping.
+    std::string source = "nightscout";
+
+    /// Dexcom Share: the Dexcom app's own login, and which server holds the
+    /// account ("us", "ous" outside the US, "jp"). The password is kept as
+    /// typed - Dexcom wants it, not a digest - and, like the Wi-Fi and MQTT
+    /// passwords, is write-only through the API and never in diagnostics.
+    std::string dexcomUsername;
+    std::string dexcomPassword;
+    std::string dexcomServer = "us";
+
+    /// LibreLinkUp: the follower account's login, its region ("US", "EU"...),
+    /// and which followed person to show when the account follows several.
+    std::string libreEmail;
+    std::string librePassword;
+    std::string libreRegion = "US";
+    std::string librePatientId;
+
+    /// Medtrum EasyView follower login.
+    std::string medtrumEmail;
+    std::string medtrumPassword;
 
     /// Which face to show while a reading is fresh, by name (GlucoseFace).
     /// A stale reading shows the no-data face whatever this says. Always one

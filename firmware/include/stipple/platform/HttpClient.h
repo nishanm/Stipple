@@ -24,7 +24,48 @@ struct HttpRequest {
     std::string_view headerName;
     std::string_view headerValue;
     std::size_t maxBodyBytes = net::http::ResponseParser::kMaxBodyBytes;
+
+    /// "GET" (the default) or "POST". Glucose services log in with a POST;
+    /// nothing else here has a reason to send anything.
+    std::string_view method = "GET";
+
+    /// Sent with a POST. Bounded by kMaxRequestBodyBytes - a login form.
+    std::string_view body;
+
+    /// Further headers, at most net::http::kMaxRequestHeaders, each checked
+    /// as `headerName` is. A `User-Agent` here replaces the default.
+    const net::http::Header* headers = nullptr;
+    std::size_t headerCount = 0;
 };
+
+/// A request body is a login form or a small JSON document.
+inline constexpr std::size_t kMaxRequestBodyBytes = 2048;
+
+/// Every check a client makes before it sends anything: method, header
+/// names and values, counts and sizes. Both adapters call this, so the
+/// simulator refuses exactly what the device refuses.
+inline bool requestIsSafe(const HttpRequest& request) noexcept {
+    if (!net::http::methodIsSafe(request.method)) {
+        return false;
+    }
+    if (!net::http::headerIsSafe(request.headerName, request.headerValue)) {
+        return false;
+    }
+    if (request.headerCount > net::http::kMaxRequestHeaders ||
+        (request.headerCount > 0 && request.headers == nullptr)) {
+        return false;
+    }
+    for (std::size_t i = 0; i < request.headerCount; ++i) {
+        if (!net::http::headerIsSafe(request.headers[i].name, request.headers[i].value)) {
+            return false;
+        }
+    }
+    if (request.body.size() > kMaxRequestBodyBytes ||
+        (request.method != "POST" && !request.body.empty())) {
+        return false;
+    }
+    return true;
+}
 
 /// One outbound HTTP request at a time.
 ///
@@ -84,6 +125,10 @@ public:
     /// Why the last attempt failed, in words that can go on a 52-pixel panel
     /// or in a log a person will read. Empty when nothing has failed.
     virtual std::string_view failure() const noexcept = 0;
+
+    /// The cookies the last response set, as `a=1; b=2`, ready to send back
+    /// as a Cookie header. Empty when there were none.
+    virtual std::string_view cookies() const noexcept { return {}; }
 
     /// Throw away the result and return to Idle, ready for the next fetch.
     virtual void reset() = 0;

@@ -841,3 +841,44 @@ return App()
     STIPPLE_REQUIRE(store.remove("a"));
     STIPPLE_CHECK_EQ(rig.fetcher.feedCount(), 0);
 }
+
+// --- POST, extra headers and cookies, for the glucose services ----------------
+
+STIPPLE_TEST(HttpFetch, BuildRequestWritesAPostWithItsLengthAndHeaders) {
+    stipple::net::http::Url url;
+    STIPPLE_REQUIRE(stipple::net::http::parseUrl("https://share1.dexcom.com/a/b?x=1", url));
+    const stipple::net::http::Header headers[] = {{"Content-Type", "application/json"},
+                                                  {"User-Agent", "okhttp/3.5.0"}};
+    const std::string wire =
+        stipple::net::http::buildRequest(url, "Stipple/1", "POST", headers, 2, "{\"a\":1}");
+    STIPPLE_CHECK(wire.rfind("POST /a/b?x=1 HTTP/1.1\r\nHost: share1.dexcom.com\r\n", 0) == 0);
+    STIPPLE_CHECK(wire.find("Content-Length: 7\r\n") != std::string::npos);
+    // The service's own agent replaces ours rather than joining it.
+    STIPPLE_CHECK(wire.find("User-Agent: okhttp/3.5.0") != std::string::npos);
+    STIPPLE_CHECK(wire.find("Stipple/1") == std::string::npos);
+    STIPPLE_CHECK(wire.size() > 7 && wire.compare(wire.size() - 7, 7, "{\"a\":1}") == 0);
+}
+
+STIPPLE_TEST(HttpFetch, SetCookieIsCollectedWithoutItsAttributes) {
+    stipple::net::http::ResponseParser parser;
+    STIPPLE_REQUIRE(parser.feed("HTTP/1.1 200 OK\r\nSet-Cookie: JSESSIONID=abc; Path=/; HttpOnly\r\n"
+                                "Set-Cookie: lang=en\r\nContent-Length: 2\r\n\r\nok"));
+    STIPPLE_CHECK(parser.done());
+    STIPPLE_CHECK_EQ(parser.response().cookies, std::string("JSESSIONID=abc; lang=en"));
+}
+
+STIPPLE_TEST(HttpFetch, RequestChecksRefuseWhatTheDeviceShouldNeverSend) {
+    stipple::platform::HttpRequest request;
+    request.url = "https://example.com/";
+    STIPPLE_CHECK(stipple::platform::requestIsSafe(request));
+    request.method = "DELETE";
+    STIPPLE_CHECK_FALSE(stipple::platform::requestIsSafe(request));
+    request.method = "GET";
+    request.body = "x";
+    STIPPLE_CHECK_FALSE(stipple::platform::requestIsSafe(request));  // a GET has no body
+    request.body = {};
+    const stipple::net::http::Header bad[] = {{"X", "a\r\nInjected: 1"}};
+    request.headers = bad;
+    request.headerCount = 1;
+    STIPPLE_CHECK_FALSE(stipple::platform::requestIsSafe(request));
+}

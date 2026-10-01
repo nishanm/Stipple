@@ -35,6 +35,8 @@ public:
         std::string failure;
         /// When true, it never finishes — for testing the fetcher's timeout.
         bool hang = false;
+        /// Sent back as the response's cookies, e.g. "session=abc".
+        std::string setCookie;
     };
 
     /// Add or replace an answer. An exact URL match; no patterns, because a
@@ -81,6 +83,14 @@ public:
     /// there was none. Parallel to `asked()`.
     const std::vector<std::string>& askedHeaders() const noexcept { return askedHeaders_; }
 
+    /// Every header each request carried, "Name: value" one per line, in the
+    /// order given - the legacy single header first.
+    const std::vector<std::string>& askedAllHeaders() const noexcept { return askedAllHeaders_; }
+
+    /// The method and body of each request, in order.
+    const std::vector<std::string>& askedMethods() const noexcept { return askedMethods_; }
+    const std::vector<std::string>& askedBodies() const noexcept { return askedBodies_; }
+
     /// Whether the last answer was cut at the request's body cap. The device
     /// truncates, so the simulator does too - an emulator that returned a
     /// whole document the panel would never see would be lying.
@@ -94,6 +104,7 @@ public:
     int status() const noexcept override { return status_; }
     std::string_view body() const noexcept override { return body_; }
     std::string_view failure() const noexcept override { return failure_; }
+    std::string_view cookies() const noexcept override { return cookies_; }
     void reset() override;
 
 private:
@@ -112,6 +123,11 @@ private:
     std::string defaultBody_;
     std::vector<std::string> asked_;
     std::vector<std::string> askedHeaders_;
+    std::vector<std::string> askedAllHeaders_;
+    std::vector<std::string> askedMethods_;
+    std::vector<std::string> askedBodies_;
+    std::string cookies_;
+    std::string pendingCookie_;
     std::uint32_t requests_ = 0;
     std::size_t maxBodyBytes_ = net::http::ResponseParser::kMaxBodyBytes;
     bool truncated_ = false;

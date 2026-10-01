@@ -19,7 +19,8 @@ class Carousel;
 namespace apps {
 namespace glucose {
 class GlucoseAlarm;
-class NightscoutSource;
+class GlucoseSource;
+using NightscoutSource = GlucoseSource;
 }
 }  // namespace apps
 

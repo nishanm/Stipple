@@ -44,6 +44,30 @@ bool parseUrl(std::string_view url, Url& out) noexcept;
 ///
 /// One extra header may be added, as a name and a value. The caller checks
 /// them with `headerIsSafe` first; this function trusts what it is given.
+/// One request header, as a name and a value.
+struct Header {
+    std::string_view name;
+    std::string_view value;
+};
+
+/// The most headers a request may carry beyond Host/User-Agent/framing.
+/// LibreLinkUp needs five; a bound is the point.
+inline constexpr std::size_t kMaxRequestHeaders = 6;
+
+/// The request line, headers and body for a GET or a POST.
+///
+/// `headers` may include `User-Agent`, which then replaces the default one -
+/// some services answer only to the agent string of their own app. A body is
+/// sent with its Content-Length; a GET sends none. The caller checks every
+/// header with `headerIsSafe` and the method with `methodIsSafe` first; this
+/// function trusts what it is given.
+std::string buildRequest(const Url& url, std::string_view userAgent, std::string_view method,
+                         const Header* headers, std::size_t headerCount, std::string_view body);
+
+/// GET or POST, and nothing else. The device asks for data and logs in to
+/// get it; a PUT or a DELETE from here would be a bug, not a feature.
+bool methodIsSafe(std::string_view method) noexcept;
+
 std::string buildGet(const Url& url, std::string_view userAgent,
                      std::string_view headerName = {}, std::string_view headerValue = {});
 
@@ -68,7 +92,14 @@ struct Response {
     /// truncated document will fail in a way that looks like the server
     /// having changed its format.
     bool truncated = false;
+
+    /// The `name=value` of every Set-Cookie, joined with "; " - ready to send
+    /// back as a Cookie header. Attributes (Path, Expires...) are dropped.
+    /// Capped at kMaxCookieBytes; a session cookie is a few dozen bytes.
+    std::string cookies;
 };
+
+inline constexpr std::size_t kMaxCookieBytes = 1024;
 
 /// Feeds bytes in, gets a response out.
 ///

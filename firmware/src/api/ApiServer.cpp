@@ -29,6 +29,7 @@
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/config/Config.h"
 #include "stipple/config/GlucoseFaceSettings.h"
+#include "stipple/config/GlucoseSourceSettings.h"
 #include "stipple/core/Sha1.h"
 #include "stipple/net/HttpFetch.h"
 #include "stipple/core/Log.h"
@@ -216,6 +217,7 @@ void writeSettings(JsonWriter& writer, const config::Config& settings) {
         .member("apiSecretSet", !settings.glucose.apiSecretSha1.empty())
         .member("pollSeconds", static_cast<std::int64_t>(settings.glucose.pollSeconds))
         .rawMembers(config::glucoseFaceMembersJson(settings.glucose))
+        .rawMembers(config::glucoseSourcePublicMembers(settings.glucose))
         .member("pinned", settings.glucose.pinned)
         .rawMember("alarms", config::alarmSettingsJson(settings.glucose.alarms))
         .endObject()
@@ -846,7 +848,19 @@ Response ApiServer::handleDiagnostics(const Request& request, std::uint64_t nowM
             .member("samples", static_cast<std::int64_t>(status.sampleCount))
             .member("fatalStreak", static_cast<std::int64_t>(status.fatalStreak))
             .member("holdSeconds", holdSeconds)
-            .endObject();
+            .member("source", apps::glucose::sourceKindName(context_.glucose->kind()))
+            .member("region", std::string(status.region));
+        // Who a LibreLinkUp account follows, for the settings page's picker.
+        // Names the account holder chose to share with this follower login.
+        writer.key("patients").beginArray();
+        for (int i = 0; i < status.patientCount; ++i) {
+            writer.beginObject()
+                .member("id", std::string(status.patients[i].id))
+                .member("name", std::string(status.patients[i].name))
+                .endObject();
+        }
+        writer.endArray();
+        writer.endObject();
     }
 
     if (context_.glucoseAlarm != nullptr) {
@@ -2186,6 +2200,12 @@ Response ApiServer::handleSettings(const Request& request) {
                 return unprocessable("'glucose.pollSeconds' must be 30-600");
             }
             updated.glucose.pollSeconds = static_cast<int>(seconds);
+        }
+        {
+            std::string error;
+            if (!config::applyGlucoseSourceSettings(glucose, updated.glucose, error)) {
+                return unprocessable(error);
+            }
         }
         // Face, faces, cycling and schedule are one block with cross-field
         // rules (the default must be in use, cycling needs two faces...), so

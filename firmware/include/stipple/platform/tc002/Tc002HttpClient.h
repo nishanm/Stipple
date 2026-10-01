@@ -63,6 +63,7 @@ public:
     int status() const noexcept override { return status_; }
     std::string_view body() const noexcept override { return body_; }
     std::string_view failure() const noexcept override { return failure_; }
+    std::string_view cookies() const noexcept override { return cookies_; }
     void reset() override;
 
 private:
@@ -78,6 +79,7 @@ private:
         /// Written before `done` is set and read only after it is seen, which
         /// is what makes a plain string safe here without a lock.
         std::string body;
+        std::string cookies;
         std::string failure;
     };
 
@@ -85,6 +87,7 @@ private:
     Stage stage_ = Stage::Idle;
     int status_ = 0;
     std::string body_;
+    std::string cookies_;
     std::string failure_;
 };
 

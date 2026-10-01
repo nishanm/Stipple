@@ -2,6 +2,7 @@
 #include "stipple/host/ApplicationHost.h"
 
 #include "stipple/config/GlucoseFaceSettings.h"
+#include "stipple/config/GlucoseSourceSettings.h"
 
 #include "stipple/api/BasicAuth.h"
 
@@ -181,7 +182,7 @@ bool ApplicationHost::initialize() {
         loadIcons();
         // A glucose display boots onto glucose, not onto the clock. After the
         // stored order so a disabled app fails the pin cleanly.
-        glucoseSource_.configure(settings_.glucose.url, settings_.glucose.apiSecretSha1,
+        glucoseSource_.configure(config::sourceSettingsOf(settings_.glucose),
                                  settings_.glucose.pollSeconds);
         // Here as well as in setScriptRunner: a glucose display whose source
         // only got a client when a script runner was installed would be an
@@ -1795,7 +1796,7 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
     applyBrightness();
     // Settings reach the host by being written into settings_, so the source
     // is re-told every tick; configure() only acts on a change.
-    glucoseSource_.configure(settings_.glucose.url, settings_.glucose.apiSecretSha1,
+    glucoseSource_.configure(config::sourceSettingsOf(settings_.glucose),
                              settings_.glucose.pollSeconds);
 
     if (rescue_.tick(nowMillis)) {

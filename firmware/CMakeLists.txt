@@ -196,6 +196,7 @@ add_library(stipple_core
     src/core/Checksum.cpp
     src/core/Md5.cpp
     src/core/Sha1.cpp
+    src/core/Sha256.cpp
     src/core/Log.cpp
     src/core/Rgb.cpp
     src/render/FrameScheduler.cpp
@@ -206,6 +207,7 @@ add_library(stipple_core
     src/apps/ClockApp.cpp
     src/apps/GlucoseApp.cpp
     src/apps/GlucoseFacePlan.cpp
+    src/apps/GlucoseCloud.cpp
     src/apps/GlucoseFont.cpp
     src/apps/GlucoseAlarm.cpp
     src/apps/GlucoseSource.cpp
@@ -222,6 +224,7 @@ add_library(stipple_core
     src/config/Config.cpp
     src/config/GlucoseAlarmSettings.cpp
     src/config/GlucoseFaceSettings.cpp
+    src/config/GlucoseSourceSettings.cpp
     src/api/Http.cpp
     src/api/JsonWriter.cpp
     src/api/ApiServer.cpp

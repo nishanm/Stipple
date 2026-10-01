@@ -283,6 +283,11 @@ bool Tc002HttpClient::begin(const HttpRequest& request) {
         failure_ = "bad header";
         return false;
     }
+    if (!requestIsSafe(request)) {
+        stage_ = Stage::Failed;
+        failure_ = "bad request";
+        return false;
+    }
 
     // https is refused *here* only when this device cannot do it safely -
     // no OpenSSL, or no trusted roots to check a certificate against. Never
@@ -303,8 +308,16 @@ bool Tc002HttpClient::begin(const HttpRequest& request) {
     // string + string_view - appending is the whole conversion.
     std::string agent = "Stipple/";
     agent.append(kVersion);
-    const std::string wire =
-        net::http::buildGet(parsed, agent, request.headerName, request.headerValue);
+    net::http::Header headers[net::http::kMaxRequestHeaders + 1];
+    std::size_t headerCount = 0;
+    if (!request.headerName.empty()) {
+        headers[headerCount++] = {request.headerName, request.headerValue};
+    }
+    for (std::size_t i = 0; i < request.headerCount; ++i) {
+        headers[headerCount++] = request.headers[i];
+    }
+    const std::string wire = net::http::buildRequest(parsed, agent, request.method, headers,
+                                                     headerCount, request.body);
     const std::string host = parsed.host;
     const int port = parsed.port;
     const bool secure = parsed.secure;
@@ -409,6 +422,7 @@ bool Tc002HttpClient::begin(const HttpRequest& request) {
                 } else {
                     exchange->status.store(response.status);
                     exchange->body = response.body;
+                    exchange->cookies = response.cookies;
                     exchange->ok.store(true);
                 }
             }
@@ -429,6 +443,7 @@ bool Tc002HttpClient::begin(const HttpRequest& request) {
     failure_.clear();
     status_ = 0;
     body_.clear();
+    cookies_.clear();
     return true;
 }
 
@@ -443,6 +458,7 @@ void Tc002HttpClient::poll(std::uint64_t) {
     if (exchange_->ok.load()) {
         status_ = exchange_->status.load();
         body_ = exchange_->body;
+        cookies_ = exchange_->cookies;
         failure_.clear();
         stage_ = Stage::Done;
     } else {
@@ -463,6 +479,7 @@ void Tc002HttpClient::reset() {
     stage_ = Stage::Idle;
     status_ = 0;
     body_.clear();
+    cookies_.clear();
     failure_.clear();
 }
 

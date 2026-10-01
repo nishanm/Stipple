@@ -205,3 +205,66 @@ STIPPLE_TEST(GlucoseSettings, DiagnosticsDescribeTheSourceWithoutItsUrlOrSecret)
     STIPPLE_CHECK_FALSE(contains(response.body, secretHash().c_str()));
     STIPPLE_CHECK_FALSE(contains(response.body, kSecret));
 }
+
+// --- the source block: which service, and its login ---------------------------
+
+STIPPLE_TEST(GlucoseSettings, SourceLoginsRoundTripAndPasswordsNeverComeBack) {
+    Fixture fixture;
+    const char* patch = R"({"glucose":{"source":"dexcom","dexcomUsername":"parent@example.com",
+        "dexcomPassword":"hunter2-not-real","dexcomServer":"ous",
+        "libreEmail":"l@example.com","librePassword":"libre-not-real","libreRegion":"eu",
+        "medtrumEmail":"m@example.com","medtrumPassword":"medtrum-not-real"}})";
+    STIPPLE_REQUIRE(fixture.call("PATCH", "/api/v1/settings", patch).status == 200);
+    STIPPLE_CHECK_EQ(fixture.config.glucose.source, std::string("dexcom"));
+    STIPPLE_CHECK_EQ(fixture.config.glucose.dexcomServer, std::string("ous"));
+    STIPPLE_CHECK_EQ(fixture.config.glucose.libreRegion, std::string("EU"));
+    STIPPLE_CHECK_EQ(fixture.config.glucose.dexcomPassword, std::string("hunter2-not-real"));
+
+    const std::string body = fixture.call("GET", "/api/v1/settings").body;
+    STIPPLE_CHECK(contains(body, "\"source\":\"dexcom\""));
+    STIPPLE_CHECK(contains(body, "\"dexcomUsername\":\"parent@example.com\""));
+    STIPPLE_CHECK(contains(body, "\"dexcomPasswordSet\":true"));
+    STIPPLE_CHECK(contains(body, "\"librePasswordSet\":true"));
+    STIPPLE_CHECK_FALSE(contains(body, "hunter2-not-real"));
+    STIPPLE_CHECK_FALSE(contains(body, "libre-not-real"));
+    STIPPLE_CHECK_FALSE(contains(body, "medtrum-not-real"));
+    STIPPLE_CHECK_FALSE(contains(fixture.call("GET", "/api/v1/diagnostics").body, "not-real"));
+
+    // Stored, so the device can log in after a reboot.
+    Config read;
+    STIPPLE_REQUIRE(fixture.store.load(read).status == LoadStatus::Loaded);
+    STIPPLE_CHECK_EQ(read.glucose.source, std::string("dexcom"));
+    STIPPLE_CHECK_EQ(read.glucose.dexcomPassword, std::string("hunter2-not-real"));
+    STIPPLE_CHECK_EQ(read.glucose.medtrumEmail, std::string("m@example.com"));
+
+    // An empty string clears a password, as with every credential here.
+    STIPPLE_REQUIRE(fixture.call("PATCH", "/api/v1/settings",
+                                 R"({"glucose":{"dexcomPassword":""}})").status == 200);
+    STIPPLE_CHECK(fixture.config.glucose.dexcomPassword.empty());
+}
+
+STIPPLE_TEST(GlucoseSettings, SourceBlockIsValidated) {
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(fixture.call("PATCH", "/api/v1/settings",
+                                  R"({"glucose":{"source":"carelink"}})").status, 422);
+    STIPPLE_CHECK_EQ(fixture.call("PATCH", "/api/v1/settings",
+                                  R"({"glucose":{"dexcomServer":"mars"}})").status, 422);
+    STIPPLE_CHECK_EQ(fixture.call("PATCH", "/api/v1/settings",
+                                  R"({"glucose":{"libreRegion":"XX"}})").status, 422);
+    STIPPLE_CHECK_EQ(fixture.call("PATCH", "/api/v1/settings",
+                                  R"({"glucose":{"dexcomUsername":5}})").status, 422);
+    STIPPLE_CHECK_EQ(fixture.config.glucose.source, std::string("nightscout"));
+}
+
+STIPPLE_TEST(GlucoseSettings, AnUnknownStoredSourceLoadsAsNightscout) {
+    SimulatorPlatform platform;
+    ConfigStore store(platform.storage());
+    Config written;
+    written.glucose.source = "carelink";
+    written.glucose.dexcomServer = "mars";
+    STIPPLE_CHECK(store.save(written));
+    Config read;
+    STIPPLE_REQUIRE(store.load(read).status == LoadStatus::Loaded);
+    STIPPLE_CHECK_EQ(read.glucose.source, std::string("nightscout"));
+    STIPPLE_CHECK_EQ(read.glucose.dexcomServer, std::string("us"));
+}
