@@ -841,6 +841,66 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "501": { $ref: "#/components/responses/NotSupported" }
 
+  /network/remember:
+    post:
+      tags: [network]
+      summary: Remember a network to fall back to
+      description: |
+        Adds a network below the one in use, without leaving it: the device
+        joins it on its own when the network in use is gone. Replaces an entry
+        with the same name; at most five. Only while connected - under the setup
+        hotspot the list is not there to write. The password is never returned;
+        `/network` lists remembered networks by name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ssid]
+              properties:
+                ssid: { type: string }
+                password:
+                  type: string
+                  description: Omit or leave empty for an open network.
+      responses:
+        "200": { description: Remembered. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { description: Not connected to a network. }
+        "422": { description: Refused, with the reason - including "that is the network in use". }
+
+  /network/forget:
+    post:
+      tags: [network]
+      summary: Forget a remembered network
+      description: The network in use cannot be forgotten from here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ssid]
+              properties:
+                ssid: { type: string }
+      responses:
+        "200": { description: Forgotten. }
+        "409": { description: Not connected to a network. }
+        "422": { description: Refused, with the reason. }
+
+  /glucose/alarm/test:
+    post:
+      tags: [glucose]
+      summary: Play a glucose alarm sound now
+      description: |
+        `{"melody":"<rtttl>"}` or `{"alarm":"urgentLow"}`, at the alarms' own
+        volume, so a settings page can let somebody hear what they chose.
+        `409` while a real alarm is sounding.
+      responses:
+        "200": { description: Playing. }
+        "409": { description: A real alarm is sounding. }
+        "422": { description: Not a melody this device can play. }
+
   /system/firmware:
     get:
       tags: [system]

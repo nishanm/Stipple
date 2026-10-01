@@ -17,8 +17,10 @@ test suite holds them **byte-identical** to its golden corpus.
 
 Stage 1 was faces only; Stage 2 added the Nightscout source and its settings;
 Stage 3 made the display a mode the knob works inside. Stage 4 added the
-speaker alarm, configurable like nightscout-clock's. The brightness schedule
-and the rest of the settings page are later stages, each scoped on its own.
+speaker alarm, configurable like nightscout-clock's. Stage 5 brought the rest
+of the TC001's settings page across: the faces in use, cycling and the daily
+schedule; Dexcom, LibreLinkUp and Medtrum; a fallback Wi-Fi network; and the
+four-tab page itself.
 
 ## Decisions
 
@@ -259,6 +261,75 @@ driver's ~48 ms buffer gaps a melody. Safe mode has no source and so no alarm.
 Loudness at 100 % is `ToneGenerator`'s 9000/32767 peak, the same as a 100 %
 button beep - whether that wakes someone across a bedroom is for the owner's
 ears on the device.
+
+## Stage 5: the TC001's settings page
+
+### Faces, cycling, schedule
+
+`config/GlucoseFaceSettings` owns the block - stored file, GET and PATCH share
+one shape - and `apps/GlucoseFacePlan` the pure rules. The host keeps the face
+on the panel (`glucoseFaceShown()`) apart from the default in settings.
+
+**The knob writes the default only when nothing else is choosing.** With
+cycling or the schedule running, a detent moves the face for now and writes
+nothing; the plan takes over at its next step. Without either, it behaves as in
+Stage 3: the face is the setting, saved two seconds after the knob stops.
+
+**A schedule row is applied on entry, not held**, so the knob still works in
+between rows, as on the TC001. The schedule wins over cycling. A row's
+brightness stands in for the panel setting; overnight dimming still sits on
+top, and an alarm still lights the panel.
+
+### The cloud sources
+
+`apps/GlucoseCloud` is each service's protocol as pure functions - request
+bodies, endpoints, parsers - tested against recorded answer shapes.
+`GlucoseSource` (once `NightscoutSource`, still aliased) drives them as a small
+state machine: a poll may be several requests (log in, then read), a session is
+kept between polls, and one dropped session is renewed within the poll; a
+second refusal in the same poll is a plain failure, not a loop.
+
+Ported from nightscout-clock's `BGSource*.cpp` and nightscout-pixbar's
+`sources.py`: the same endpoints, application ids and fallbacks. Differences,
+on purpose:
+
+- **Every refusal holds off**: 401/403, 429, Dexcom's AccountPasswordInvalid
+  family, LibreLinkUp's status 2 and 4, Medtrum's failed login - five minutes,
+  doubling to thirty.
+- **Cloud services are asked at most once a minute**, whatever `pollSeconds`
+  says.
+- **LibreLinkUp's graph is fetched only to fill a gap**; each minute's reading
+  is merged, and one within thirty seconds of a reading held is the same
+  reading. A graph over 60 KB is dropped for the latest reading alone.
+- **A region redirect is followed for the session, not saved** - one extra
+  login after a reboot, and the settings are never rewritten behind the
+  owner's back.
+- **Several followed people and none chosen fails as "choose a patient"**
+  and lists them in diagnostics; the page offers the picker.
+- **Switching service drops the samples**, so one person's readings never
+  carry on under another's name.
+
+Passwords are stored as typed - the services want them, not a digest - like
+the Wi-Fi and MQTT passwords: write-only through the API, never in diagnostics.
+
+### A second network
+
+The TC002's supplicant already falls back through a list, so the TC001's
+"additional network" is one more remembered entry at priority 10 (a join is
+100), enabled but not selected. See `INetworkManager::rememberNetwork`.
+
+### The page
+
+`firmware/web/index.html`, `glucose.js`, `glucose.css`; the old page is
+`advanced.html`. One Save sends one PATCH of the changed paths, and the faces
+block always travels whole because its rules are cross-field. The stylesheet is
+adapted from nightscout-clock's (LGPL-2.1, see THIRD_PARTY_NOTICES).
+
+### Not carried over
+
+mmol/L and configurable colour bands: the faces are held byte for byte to the
+reference corpus, which is mg/dL with fixed bands. The novelty faces (unicorn,
+dragon, race car). Medtronic CareLink, which the TC001 also disables.
 
 ## The golden gate
 

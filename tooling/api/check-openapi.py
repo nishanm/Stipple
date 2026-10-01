@@ -35,8 +35,17 @@ def routes_from_router(source: str) -> set:
 
     # Four segments, fixed: /api/v1/<head>/<tail>
     #     if (head == "system" && parts[3] == "reboot") {
-    for head, tail in re.findall(r'head == "(\w+)" && parts\[3\] == "(\w+)"', source):
+    for head, tail in re.findall(
+        r'(?<!parts\.size\(\) == 5 && )head == "(\w+)" && parts\[3\] == "(\w+)"\)', source
+    ):
         routes.add("/%s/%s" % (head, tail))
+
+    # Five segments, fixed: /api/v1/glucose/alarm/test
+    for head, middle, tail in re.findall(
+        r'parts\.size\(\) == 5 && head == "(\w+)" && parts\[3\] == "(\w+)" && parts\[4\] == "(\w+)"',
+        source,
+    ):
+        routes.add("/%s/%s/%s" % (head, middle, tail))
 
     # Four segments, an id: the collections that take one.
     #     if (head == "apps") { match.resource = Resource::AppItem;

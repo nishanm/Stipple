@@ -101,6 +101,8 @@ get back in.
 | `POST /input` | Inject a button press |
 | `POST /glucose/alarm/test` | Play a glucose alarm melody now: `{"melody":"<rtttl>"}` or `{"alarm":"urgentLow"}`; `409` while a real alarm sounds |
 | `GET POST /sound` | What it can play, and play one |
+| `POST /network/remember` | Remember a fallback network without leaving this one: `{"ssid","password"}` |
+| `POST /network/forget` | Forget a remembered network (never the one in use) |
 | `GET POST /apps` | List, add |
 | `GET PUT PATCH DELETE /apps/{id}` | One app |
 | `POST /apps/{id}/activate` | Show it now |

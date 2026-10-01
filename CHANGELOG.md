@@ -8,6 +8,69 @@ Versions are `MAJOR.MINOR.PATCH`. While on `0.x` every release is a
 prerelease: the interfaces move, and nothing here installs onto a stock
 device without a capture of that device first.
 
+## Unreleased
+
+### Added
+
+- **A glucose settings page at the front door.** `http://<clock>/` is now the
+  TC001 nightscout-clock page's four tabs - Display, Glucose, Alarms, WiFi &
+  system - with the same words in the same order, a live view of the panel,
+  and a bottom tab bar on a phone. Stipple's full page is one link away at
+  `/advanced.html`, for firmware updates, backup, MQTT, scripts and the log.
+- **Choose the faces in use, a default, cycling and a daily schedule.**
+  `glucose.faces`, `glucose.face`, `glucose.cycleSeconds` (10 s to 5 min) and
+  `glucose.schedule` (up to six rows of time, face and brightness; the last
+  runs overnight). The knob moves only between the faces in use.
+- **Dexcom Share, LibreLinkUp and Medtrum, beside Nightscout.** The device
+  logs in to them itself over its own TLS. `glucose.source` picks one; each
+  keeps its login while another is chosen. Passwords are write-only, never in
+  diagnostics, and a refused login is held off five minutes doubling to
+  thirty, so a wrong password cannot lock an account.
+- **An additional Wi-Fi network.** `POST /api/v1/network/remember` adds a
+  network the clock falls back to when the one in use is gone, without
+  leaving it; `/network/forget` removes one. At most five.
+- **A speaker alarm for glucose**, configurable like nightscout-clock's:
+  urgent low, low, high and no data, each with threshold, snooze, sound and
+  time windows. See `docs/development/glucose-app.md`.
+- **A glucose app.** Six faces for a continuous glucose monitor reading - a
+  hero value with direction, with delta, with three hours of history, a
+  bedside clock-and-value, a full-panel graph, and an explicit no-data face -
+  reproduced byte for byte from the `nightscout-pixbar` reference renderer's
+  golden corpus, and held to it by the test suite. See
+  `docs/development/glucose-app.md`.
+- **The glucose app reads Nightscout itself.** Set the site's URL and API
+  secret under the app's settings and the device polls `entries.json` once a
+  minute, ages the reading honestly when the server stops answering, shows the
+  no-data face once it is twenty minutes old, and holds off for five minutes
+  (doubling to thirty) after a refused credential. The device keeps only the
+  secret's SHA-1 - the form Nightscout checks - and never returns it.
+- **The glucose display is a mode.** While a Nightscout source is set and the
+  app is pinned (the default), it stays on screen and the knob moves between
+  its faces instead of between apps - one detent, one face, the choice kept
+  across reboots. The middle button still goes back to the clock, and the
+  carousel returns to glucose on its own. A face changed while the reading is
+  stale is named on the readout, since the no-data face would hide the change.
+- **Fetches can carry a header and ask for a larger body.** `IHttpClient::begin`
+  takes an `HttpRequest` with one optional header and a per-request body cap;
+  the kilobyte default is unchanged for scripts. The simulator now truncates at
+  the cap like the device does.
+
+- `IHttpClient` requests can be a POST with a body and up to six headers, and
+  report the cookies a response set. Core gains SHA-256.
+
+### Fixed
+
+- **Two things fetching no longer fight over the one HTTP client.** The script
+  fetcher waits while another request is in flight instead of failing it, and
+  deleting a script no longer resets a fetch it did not start.
+- **An expired adjustment readout is painted over.** Over a face that does not
+  redraw on its own it stayed on the panel until the next minute.
+
+- **The TC002 speaker works after the stock app.** The vendor application
+  leaves the audio device enabled when stopped, and the driver then refused
+  Stipple's settings with "not permitted". Stipple releases it and tries once
+  more.
+
 ## 0.2.9
 
 ### Added
@@ -309,37 +372,6 @@ device without a capture of that device first.
 ## 0.2.5
 
 ### Added
-
-- **A glucose app.** Six faces for a continuous glucose monitor reading - a
-  hero value with direction, with delta, with three hours of history, a
-  bedside clock-and-value, a full-panel graph, and an explicit no-data face -
-  reproduced byte for byte from the `nightscout-pixbar` reference renderer's
-  golden corpus, and held to it by the test suite. See
-  `docs/development/glucose-app.md`.
-- **The glucose app reads Nightscout itself.** Set the site's URL and API
-  secret under the app's settings and the device polls `entries.json` once a
-  minute, ages the reading honestly when the server stops answering, shows the
-  no-data face once it is twenty minutes old, and holds off for five minutes
-  (doubling to thirty) after a refused credential. The device keeps only the
-  secret's SHA-1 - the form Nightscout checks - and never returns it.
-- **The glucose display is a mode.** While a Nightscout source is set and the
-  app is pinned (the default), it stays on screen and the knob moves between
-  its faces instead of between apps - one detent, one face, the choice kept
-  across reboots. The middle button still goes back to the clock, and the
-  carousel returns to glucose on its own. A face changed while the reading is
-  stale is named on the readout, since the no-data face would hide the change.
-- **Fetches can carry a header and ask for a larger body.** `IHttpClient::begin`
-  takes an `HttpRequest` with one optional header and a per-request body cap;
-  the kilobyte default is unchanged for scripts. The simulator now truncates at
-  the cap like the device does.
-
-### Fixed
-
-- **Two things fetching no longer fight over the one HTTP client.** The script
-  fetcher waits while another request is in flight instead of failing it, and
-  deleting a script no longer resets a fetch it did not start.
-- **An expired adjustment readout is painted over.** Over a face that does not
-  redraw on its own it stayed on the panel until the next minute.
 
 - **`https` works.** Stipple carries its own TLS, so a script can fetch from
   an API that requires it. The certificate chain is verified against trusted
