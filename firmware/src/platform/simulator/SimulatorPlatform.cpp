@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "stipple/platform/simulator/SimulatorPlatform.h"
 
+#include "stipple/audio/Sound.h"
+
 namespace stipple {
 namespace platform {
 namespace simulator {
@@ -134,7 +136,15 @@ bool SimulatorAudio::playTone(int frequencyHz, int durationMillis) {
 }
 
 bool SimulatorAudio::playSound(std::string_view name) {
-    if (name.empty()) {
+    // Checked against the same catalogue the device uses, which is the whole
+    // reason that catalogue moved into core.
+    //
+    // This used to accept any non-empty string and answer true, so the
+    // simulator agreed to sounds the hardware refuses - and the simulator is
+    // what people develop scripts against. A script calling sound('trumpet')
+    // worked on a desk and did nothing on a clock, with the return value
+    // saying it had worked in both places.
+    if (audio::SoundLibrary::find(name) == nullptr) {
         return false;
     }
     Request request;
@@ -176,6 +186,16 @@ bool SimulatorMqtt::connect(const MqttConnectOptions& options, IMqttListener& li
     // return value: the caller's reconnect policy needs to see an attempt that
     // was made and failed, not one that was never started.
     if (options.host.empty()) {
+        return false;
+    }
+
+    // Refused here too, and for a reason that is about the product rather
+    // than about sockets: this broker is a table in memory, so honouring the
+    // flag would cost nothing and mean nothing. A simulator that connects
+    // happily with TLS on, against a device that refuses, would send somebody
+    // to their hardware with a configuration that had "worked".
+    if (options.tls && !supportsTls()) {
+        setState(MqttState::Disabled);
         return false;
     }
 

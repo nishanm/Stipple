@@ -1,14 +1,10 @@
 # name: Fireworks
 # summary: Rockets climb, burst into coloured sparks, then fade and fall. One at a time.
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation, celebration
 # panel: 52x16
 
 import math
-
-# A single show, one rocket at a time. More than one at once on a 52x16 panel
-# reads as static rather than as fireworks - the eye needs the pause between
-# bursts to register each one as an event.
 
 class App
   var phase          # "climb" or "burst"

@@ -6,23 +6,6 @@
 
 import math
 
-# A melody that writes itself, one bar at a time.
-#
-# Sixteen steps, five notes, one voice. The five are an A minor pentatonic -
-# every pair of them sounds intentional together, which is what lets a
-# random walk through them come out as music rather than as noise. Choose any
-# other five and this is a script that bleeps.
-#
-# One voice, not five, and that is a decision rather than a limit: a piezo
-# plays one note at a time, so a column with three lit cells would sound like
-# whichever one reached the queue first. Each step holds one note or a rest,
-# which is also why the grid reads as a melody line instead of a wall.
-#
-# The pattern mutates two steps per loop. Enough that it is never quite the
-# same bar twice, slow enough that you can still hear it as the same tune.
-#
-# With no speaker it is a generative animation, and says so.
-
 class App
   var NOTES        # Hz, low to high
   var TINT         # one colour per row
@@ -71,14 +54,6 @@ class App
     clear(rgb(0, 0, 0))
     var now = now_ms()
 
-    # 125 ms a step: eight steps a second, two seconds to the bar. Driven
-    # by the clock, so the tune keeps its tempo whatever the panel is doing
-    # and does not speed up on an idle device.
-    #
-    # Coming back after the carousel has been elsewhere, this advances one
-    # step and re-anchors rather than replaying the bars that went past -
-    # sixty seconds away is four hundred and eighty steps, and nobody wants
-    # to hear them all at once.
     var struck = false
     if now - self.last >= 125
       self.last = now

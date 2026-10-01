@@ -1,22 +1,10 @@
 # name: Game of Life
 # summary: Conway's cells breed and die across the panel, reseeding when they stall.
-# author: Galadril
+# author: Stipple
 # tags: animation, generative, classic
 # panel: 52x16
 
 import math
-
-# Conway's Game of Life on the full 52x16 grid.
-#
-# The interesting thing about Life on a panel this small is that most seeds
-# settle into a still life or a short blinker within a few hundred
-# generations - so this watches for a stall and reseeds, which is what makes
-# it something to leave running rather than a thing that stops.
-#
-# Written against the instruction budget from the start. The obvious shape -
-# a neighbour() method called eight times per cell - is 6,656 calls per
-# generation on this grid and does not fit. Everything below is written the
-# awkward way on purpose; see the comments in step().
 
 class App
   var w, h
@@ -48,17 +36,7 @@ class App
   end
 
   def step()
-    # Locals, and the neighbours written out rather than fetched through a
-    # method.
-    #
-    # Life reads eight neighbours per cell, so on 832 cells anything done
-    # per-neighbour happens 6,656 times a generation. A method call there is
-    # what put the first version of this over the budget, where it lost every
-    # frame it tried to step on.
-    #
-    # The edge wrapping - so gliders leave one side and return on the other
-    # rather than piling against a wall - is hoisted: rows above and below
-    # once per row, columns once per cell.
+
     var c = self.cells
     var nx = self.next
     var w = self.w
@@ -120,15 +98,7 @@ class App
   end
 
   def draw()
-    # Eight generations a second, not thirty.
-    #
-    # On its own clock rather than the frame rate, so it runs at the same
-    # speed whatever else the panel is doing - and because stepping on every
-    # frame is both eight times the work and far faster than Life is worth
-    # watching at.
-    #
-    # now_ms() is the device clock, so this keeps its cadence across the
-    # carousel taking the app away and bringing it back.
+
     var now = now_ms()
     if now - self.last >= 125
       self.last = now

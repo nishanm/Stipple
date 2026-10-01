@@ -1,6 +1,6 @@
 # name: Lava
 # summary: Slow glowing lava blobs drift, stretch and morph across the entire display.
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation, relaxing, lava
 # panel: 52x16
 
@@ -105,7 +105,6 @@ class App
     end
   end
 
-
   def draw()
     var t = now_ms()
 
@@ -116,11 +115,6 @@ class App
 
     # Very dark warm background
     clear(rgb(5, 0, 4))
-
-
-    # ================================================
-    # LARGE LEFT BLOB
-    # ================================================
 
     var p1 = self.tick % 48
     var y1 = 0
@@ -149,11 +143,6 @@ class App
 
     self.blob(x1, y1, s1)
 
-
-    # ================================================
-    # CENTER BLOB
-    # ================================================
-
     var p2 = (self.tick + 17) % 56
     var y2 = 0
 
@@ -178,11 +167,6 @@ class App
     end
 
     self.blob(x2, y2, s2)
-
-
-    # ================================================
-    # RIGHT BLOB
-    # ================================================
 
     var p3 = (self.tick + 31) % 52
     var y3 = 0
@@ -209,11 +193,6 @@ class App
 
     self.blob(x3, y3, s3)
 
-
-    # ================================================
-    # SMALL FLOATING DROPLET
-    # ================================================
-
     var p4 = (self.tick + 9) % 38
     var y4 = 14 - (p4 / 3)
 
@@ -229,11 +208,6 @@ class App
 
     self.blob(x4, y4, 1)
 
-
-    # ================================================
-    # SECOND SMALL DROPLET
-    # ================================================
-
     var p5 = (self.tick + 24) % 43
     var y5 = 2 + (p5 / 4)
 
@@ -248,11 +222,6 @@ class App
     end
 
     self.blob(x5, y5, 1)
-
-
-    # ================================================
-    # HOT LAVA ALONG BOTTOM
-    # ================================================
 
     line(0, 15, width() - 1, 15, rgb(100, 2, 25))
 

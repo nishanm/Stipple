@@ -172,6 +172,21 @@ Bridge::Translation Bridge::translate(const platform::MqttMessage& message) cons
         } else {
             return translation;
         }
+    } else if (head == "input" && rest.empty()) {
+        // The same press the web UI's on-screen buttons send, and the same
+        // handler. Worth having over MQTT because the interesting presses now
+        // come from somewhere other than a thumb: a script that has taken the
+        // controls (ADR 0024) is a game, and an automation or a bridged
+        // gamepad is exactly the sort of thing that wants to play it.
+        request.method = api::Method::Post;
+        request.path = "/api/v1/input";
+    } else if (head == "sound" && rest.empty()) {
+        // Make a noise. The obvious automation for a device on a shelf: a
+        // doorbell, a washing machine finishing, a build going red. It reaches
+        // the same handler as the web UI, so a name the API refuses is refused
+        // here too rather than being silently accepted by a second path.
+        request.method = api::Method::Post;
+        request.path = "/api/v1/sound";
     } else if (head == "reboot" && rest.empty()) {
         request.method = api::Method::Post;
         request.path = "/api/v1/system/reboot";

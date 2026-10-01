@@ -1,14 +1,10 @@
 # name: Aurora
 # summary: Northern lights - green and violet curtains that drift, brighten and fade.
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation, relaxing, colour
 # panel: 52x16
 
 import math
-
-# Slow vertical curtains of light, the way an aurora hangs and ripples. Each
-# column has its own wave, and the bands brighten from the bottom up so the
-# colour pools along a moving edge rather than filling the whole panel flat.
 
 class App
   var t

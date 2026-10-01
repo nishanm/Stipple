@@ -19,15 +19,20 @@
 #include <cstdint>
 #include <string_view>
 
+#include "stipple/apps/BatteryApp.h"
+#include "stipple/apps/ClockApp.h"
+#include "stipple/apps/StopwatchApp.h"
 #include "stipple/graphics/Canvas.h"
 #include "stipple/imageio/Png.h"
 #include "stipple/platform/PlatformServices.h"
 #include "stipple/mqtt/ScriptGateway.h"
 #include "stipple/net/ScriptFetcher.h"
+#include "stipple/net/HttpFetch.h"
 #include "stipple/platform/simulator/SimulatorHttpClient.h"
 #include "stipple/platform/simulator/SimulatorPlatform.h"
 #include "stipple/platform/MqttClient.h"
 #include "stipple/graphics/Framebuffer.h"
+#include "stipple/text/Text.h"
 #include "stipple/script/ScriptHost.h"
 #include "stipple/script/ScriptStore.h"
 #include "support/TestFramework.h"
@@ -167,8 +172,28 @@ STIPPLE_TEST(ShopScripts, EveryPublishedScriptCompilesAndDraws) {
             // its death. It also means the handler's own instruction budget
             // and stack balance are covered for every published script, not
             // only for the ones in the unit tests.
+            //
+            // **"select", because that is the name ApplicationHost sends.**
+            // This said "action" for a long time, and every published script
+            // guards its handler with `if name != "select" return`, so the
+            // press arrived, was rejected on the first line, and the test
+            // proved nothing about the code underneath. A whole class of
+            // handler bug could not fail here - and one did reach a device,
+            // where pressing the button killed the script outright.
+            //
+            // A script declaring `# @input exclusive` (ADR 0024) receives four
+            // more names, so it gets all five in rotation. Pressing only
+            // "select" at a game would cover the serve and never the paddle -
+            // the same shape of hole as the "action" bug above, and it would
+            // reach a device the same way.
             if (frame % 11 == 0) {
-                store.button("shop", "action");
+                static const char* kExclusive[] = {"select", "left", "right",
+                                                   "minus", "plus"};
+                const bool takesAll = store.inputMode("shop") ==
+                                      stipple::script::InputMode::Exclusive;
+                const char* name =
+                    takesAll ? kExclusive[(frame / 11) % 5] : "select";
+                store.button("shop", name);
             }
         }
 
@@ -207,7 +232,32 @@ STIPPLE_TEST(ShopScripts, NoneOfThemLeak) {
         for (int frame = 0; frame < 600; ++frame) {
             moving.monotonicMillis = static_cast<std::uint64_t>(120 + frame) * 33u;
             store.setEnvironment(moving);
-            store.draw("shop", canvas, static_cast<std::uint64_t>(frame) * 33u);
+            const bool drew =
+                store.draw("shop", canvas, static_cast<std::uint64_t>(frame) * 33u);
+
+            // Checked here as well as in the compile test, because this is
+            // the only loop long enough to reach a steady state. A script
+            // that accumulates - a pile of sand, a filling well - costs more
+            // per frame the fuller it gets, and its most expensive frame is
+            // nowhere near the first ninety.
+            //
+            // That is exactly how Sandbox shipped a script that died when
+            // somebody pressed the button: three seconds in, the pile was
+            // small and the shake was cheap.
+            if (!drew) {
+                std::printf("    [shop] %s died on frame %d of 600: %s\n",
+                            example.name.c_str(), frame,
+                            store.find("shop")->problem.c_str());
+            }
+            STIPPLE_REQUIRE(drew);
+
+            // Not checked for a return: false also means "this script has
+            // no on_button", which most of them do not. What matters is that
+            // the frame after a press still draws, which the check above
+            // does for every frame.
+            if (frame % 37 == 0) {
+                store.button("shop", "select");
+            }
         }
         store.collectGarbage("shop");
         const std::size_t after = store.find("shop")->memoryBytes;
@@ -273,6 +323,7 @@ public:
         return true;
     }
     void poll(std::uint64_t) override {}
+    bool supportsTls() const override { return false; }
 
     std::vector<std::string> watched;
 };
@@ -302,7 +353,8 @@ STIPPLE_TEST(ShopScripts, EachAudioScriptSaysWhenTheDeviceCannotMakeASound) {
     // Checking that it draws *something* would pass a script that ignored
     // the question entirely, so this renders the same frame twice, once
     // with a speaker and once without, and requires the two to differ.
-    const char* needAudio[] = {"metronome.be", "kitchen-timer.be", "sequencer.be"};
+    const char* needAudio[] = {"metronome.be", "kitchen-timer.be", "sequencer.be",
+                               "pomodoro.be"};
 
     for (const char* name : needAudio) {
         const std::string source = readFile(std::string(STIPPLE_SCRIPTS_DIR) + "/" + name);
@@ -422,7 +474,8 @@ STIPPLE_TEST(ShopScripts, EachMicScriptSaysWhenTheDeviceCannotHear) {
 }
 
 STIPPLE_TEST(ShopScripts, EachHttpScriptSaysWhenItCannotFetch) {
-    const char* needNetwork[] = {"weather.be"};
+    const char* needNetwork[] = {"weather.be", "daylight.be", "youtube.be",
+                                 "github.be"};
 
     for (const char* name : needNetwork) {
         const std::string source = readFile(std::string(STIPPLE_SCRIPTS_DIR) + "/" + name);
@@ -443,6 +496,284 @@ STIPPLE_TEST(ShopScripts, EachHttpScriptSaysWhenItCannotFetch) {
         }
         STIPPLE_CHECK(countLit(framebuffer) > 0);
     }
+}
+
+STIPPLE_TEST(ShopScripts, TheGitHubScriptReadsAFullYearOfContributions) {
+    // A real-sized body, not a token one. The whole design of this script is
+    // about the 15 KB the contributions API actually sends: it splits on
+    // `"level":` instead of parsing JSON, because building 365 Berry maps in
+    // one frame would cost the frame. A three-entry fixture would prove none
+    // of that.
+    const std::string source =
+        readFile(std::string(STIPPLE_SCRIPTS_DIR) + "/github.be");
+    STIPPLE_REQUIRE(!source.empty());
+
+    std::string body = R"({"total":{"lastYear":928},"contributions":[)";
+    for (int i = 0; i < 365; ++i) {
+        if (i > 0) { body += ','; }
+        // Levels cycle so every shade is exercised, and the count field is
+        // present because the real one has it and it is what makes the
+        // payload big.
+        body += R"({"date":"2026-01-01","count":)" + std::to_string(i % 17) +
+                R"(,"level":)" + std::to_string(i % 5) + "}";
+    }
+    body += "]}";
+    STIPPLE_REQUIRE(body.size() > 12000);
+    STIPPLE_REQUIRE(body.size() < stipple::net::http::ResponseParser::kMaxBodyBytes);
+
+    stipple::platform::simulator::SimulatorHttpClient client;
+    stipple::net::ScriptFetcher fetcher;
+    fetcher.setClient(&client);
+    fetcher.setNetworkUp(true);
+
+    stipple::script::ScriptEnvironment environment;
+    environment.timeKnown = true;
+    environment.year = 2026;
+    environment.month = 9;
+    environment.day = 28;
+    environment.weekday = 1;
+
+    ScriptStore store;
+    store.setHttp(&fetcher);
+    store.setEnvironment(environment);
+    STIPPLE_REQUIRE(store.put("shop", "github.be", source) ==
+                    stipple::script::ScriptPutResult::Added);
+
+    Framebuffer waiting;
+    Canvas waitingCanvas(waiting);
+    STIPPLE_REQUIRE(store.draw("shop", waitingCanvas, 0));
+    STIPPLE_REQUIRE(fetcher.feedCount() == 1);
+
+    fetcher.tick(0);
+    STIPPLE_REQUIRE(!client.asked().empty());
+    // The declared default username, and the year off the clock.
+    STIPPLE_CHECK(client.asked().front().find("galadril") != std::string::npos);
+    STIPPLE_CHECK(client.asked().front().find("y=2026") != std::string::npos);
+
+    stipple::platform::simulator::SimulatorHttpClient::Route route;
+    route.url = client.asked().front();
+    route.latencyMillis = 0;
+    route.body = body;
+    client.answer(route);
+
+    for (std::uint64_t now = 0;
+         now < stipple::net::ScriptFetcher::kFailureBackoffMillis + 2000; now += 100) {
+        fetcher.tick(now);
+    }
+
+    Framebuffer drawn;
+    Canvas canvas(drawn);
+    STIPPLE_REQUIRE(store.draw("shop", canvas, 33));
+    STIPPLE_CHECK(store.problem("shop").empty());
+
+    // The grid occupies the top seven rows and every column, so a parse that
+    // produced nothing would leave them black.
+    int grid = 0;
+    for (int y = 0; y < 7; ++y) {
+        for (int x = 0; x < Framebuffer::kWidth; ++x) {
+            if (drawn.at(x, y) != colors::kBlack) { ++grid; }
+        }
+    }
+    if (grid < 200) {
+        std::printf("    [shop] github.be lit only %d of 364 grid pixels\n",
+                    grid);
+    }
+    STIPPLE_CHECK(grid > 200);
+
+    // And the headline number, pixel-exact.
+    Framebuffer expected;
+    Canvas expectedCanvas(expected);
+    stipple::text::drawLine(expectedCanvas, "928", 0, 9,
+                            stipple::text::font5x7(), stipple::colors::kWhite);
+
+    int overlap = 0;
+    int wanted = 0;
+    for (int y = 0; y < Framebuffer::kHeight; ++y) {
+        for (int x = 0; x < Framebuffer::kWidth; ++x) {
+            if (expected.at(x, y) != colors::kBlack) {
+                ++wanted;
+                if (drawn.at(x, y) != colors::kBlack) { ++overlap; }
+            }
+        }
+    }
+    STIPPLE_REQUIRE(wanted > 0);
+    STIPPLE_CHECK(overlap == wanted);
+
+    // Parsing is not repeated on every frame. Fifteen kilobytes through
+    // string.split once is affordable; thirty times a second is not, and the
+    // only signal a script gets that the body changed is the age resetting.
+    const std::uint32_t after = store.find("shop")->lastInstructions;
+    Canvas again(drawn);
+    STIPPLE_REQUIRE(store.draw("shop", again, 66));
+    STIPPLE_CHECK(store.find("shop")->lastInstructions <= after);
+}
+
+STIPPLE_TEST(ShopScripts, TheYouTubeScriptReadsARealSocialCountsReply) {
+    // Recorded from api.socialcounts.org, byte for byte. The nesting is the
+    // fragile part - counters.api.subscriberCount, with an `estimation`
+    // sibling that is a guess rather than a published figure - and nothing
+    // else in the suite would notice if that shape changed.
+    const std::string source =
+        readFile(std::string(STIPPLE_SCRIPTS_DIR) + "/youtube.be");
+    STIPPLE_REQUIRE(!source.empty());
+
+    stipple::platform::simulator::SimulatorHttpClient client;
+    stipple::net::ScriptFetcher fetcher;
+    fetcher.setClient(&client);
+    fetcher.setNetworkUp(true);
+
+    ScriptStore store;
+    store.setHttp(&fetcher);
+    STIPPLE_REQUIRE(store.put("shop", "youtube.be", source) ==
+                    stipple::script::ScriptPutResult::Added);
+
+    Framebuffer waiting;
+    Canvas waitingCanvas(waiting);
+    STIPPLE_REQUIRE(store.draw("shop", waitingCanvas, 0));
+    STIPPLE_REQUIRE(fetcher.feedCount() == 1);
+
+    fetcher.tick(0);
+    STIPPLE_REQUIRE(!client.asked().empty());
+
+    // The URL carries the declared default channel, which is also the check
+    // that `@config` reached the script at all.
+    STIPPLE_CHECK(client.asked().front().find("UCpGLALzRO0uaasWTsm9M99w") !=
+                  std::string::npos);
+
+    stipple::platform::simulator::SimulatorHttpClient::Route route;
+    route.url = client.asked().front();
+    route.latencyMillis = 0;
+    route.body =
+        R"({"counters":{"estimation":{"subscriberCount":424,"viewCount":374271,)"
+        R"("videoCount":109},"api":{"subscriberCount":424,"viewCount":374263,)"
+        R"("videoCount":109}}})";
+    client.answer(route);
+
+    for (std::uint64_t now = 0;
+         now < stipple::net::ScriptFetcher::kFailureBackoffMillis + 2000; now += 100) {
+        fetcher.tick(now);
+    }
+
+    Framebuffer drawn;
+    Canvas canvas(drawn);
+    STIPPLE_REQUIRE(store.draw("shop", canvas, 33));
+    STIPPLE_CHECK(store.problem("shop").empty());
+    STIPPLE_CHECK(!(drawn == waiting));
+
+    // 424 subscribers, drawn as "424" at x=14. Pixel-exact, because
+    // "it drew something" would pass on the word "fetching".
+    Framebuffer expected;
+    Canvas expectedCanvas(expected);
+    stipple::text::drawLine(expectedCanvas, "424", 14, 0,
+                            stipple::text::font5x7(), stipple::colors::kWhite);
+
+    int overlap = 0;
+    int wanted = 0;
+    for (int y = 0; y < Framebuffer::kHeight; ++y) {
+        for (int x = 0; x < Framebuffer::kWidth; ++x) {
+            if (expected.at(x, y) != colors::kBlack) {
+                ++wanted;
+                if (drawn.at(x, y) != colors::kBlack) { ++overlap; }
+            }
+        }
+    }
+    STIPPLE_REQUIRE(wanted > 0);
+    if (overlap != wanted) {
+        std::printf("    [shop] youtube.be drew %d of %d pixels of \"424\"\n",
+                    overlap, wanted);
+    }
+    STIPPLE_CHECK(overlap == wanted);
+}
+
+STIPPLE_TEST(ShopScripts, TheDaylightScriptReadsRealSunriseTimes) {
+    // The shop gate runs it with no network, where it draws "fetching" and
+    // returns before touching the JSON - so nothing else here would notice
+    // if Open-Meteo renamed a field or moved the hour within the timestamp.
+    //
+    // The timestamp parsing is the fragile part: the script reads the hour
+    // and minute at fixed offsets in "2026-09-27T07:23", which is correct
+    // right up until the API starts returning seconds.
+    const std::string source =
+        readFile(std::string(STIPPLE_SCRIPTS_DIR) + "/daylight.be");
+    STIPPLE_REQUIRE(!source.empty());
+
+    stipple::platform::simulator::SimulatorHttpClient client;
+    stipple::net::ScriptFetcher fetcher;
+    fetcher.setClient(&client);
+    fetcher.setNetworkUp(true);
+
+    // Midday, so the sun is up and the arc has a dot on it.
+    stipple::script::ScriptEnvironment environment;
+    environment.timeKnown = true;
+    environment.hour = 12;
+    environment.minute = 30;
+
+    ScriptStore store;
+    store.setHttp(&fetcher);
+    store.setEnvironment(environment);
+    STIPPLE_REQUIRE(store.put("shop", "daylight.be", source) ==
+                    stipple::script::ScriptPutResult::Added);
+
+    Framebuffer waiting;
+    Canvas waitingCanvas(waiting);
+    STIPPLE_REQUIRE(store.draw("shop", waitingCanvas, 0));
+    STIPPLE_REQUIRE(fetcher.feedCount() == 1);
+
+    fetcher.tick(0);
+    STIPPLE_REQUIRE(!client.asked().empty());
+
+    stipple::platform::simulator::SimulatorHttpClient::Route route;
+    route.url = client.asked().front();
+    route.latencyMillis = 0;
+    route.body =
+        R"({"latitude":52.37,"longitude":4.89,"timezone":"Europe/Amsterdam",)"
+        R"("daily":{"time":["2026-09-27"],)"
+        R"("sunrise":["2026-09-27T07:23"],"sunset":["2026-09-27T19:34"]}})";
+    client.answer(route);
+
+    for (std::uint64_t now = 0;
+         now < stipple::net::ScriptFetcher::kFailureBackoffMillis + 2000; now += 100) {
+        fetcher.tick(now);
+    }
+
+    Framebuffer drawn;
+    Canvas canvas(drawn);
+    STIPPLE_REQUIRE(store.draw("shop", canvas, 33));
+
+    STIPPLE_CHECK(countLit(drawn) > countLit(waiting));
+    STIPPLE_CHECK(!(drawn == waiting));
+    STIPPLE_CHECK(store.problem("shop").empty());
+
+    // Sunset is 19:34 and the script draws the *next* event, so those digits
+    // have to be on the panel. Rendering them separately and comparing beats
+    // asserting a pixel count, which would pass on any five characters.
+    Framebuffer expected;
+    Canvas expectedCanvas(expected);
+    // x=8, matching the script: the triangle before it ends at pixel 6.
+    // This is pixel-exact on purpose - it caught the time moving by one
+    // column when the day-length label was removed, which no "did it draw
+    // something" check would have noticed.
+    stipple::text::drawLine(expectedCanvas, "19:34", 8, 9,
+                            stipple::text::font5x7(), stipple::colors::kWhite);
+
+    int overlap = 0;
+    int wanted = 0;
+    for (int y = 0; y < Framebuffer::kHeight; ++y) {
+        for (int x = 0; x < Framebuffer::kWidth; ++x) {
+            if (expected.at(x, y) != colors::kBlack) {
+                ++wanted;
+                if (drawn.at(x, y) != colors::kBlack) {
+                    ++overlap;
+                }
+            }
+        }
+    }
+    STIPPLE_REQUIRE(wanted > 0);
+    if (overlap != wanted) {
+        std::printf("    [shop] daylight.be drew %d of %d pixels of \"19:34\"\n",
+                    overlap, wanted);
+    }
+    STIPPLE_CHECK(overlap == wanted);
 }
 
 STIPPLE_TEST(ShopScripts, TheWeatherScriptReadsARealOpenMeteoReply) {
@@ -580,10 +911,68 @@ STIPPLE_TEST(ShopScripts, WriteFramesOnRequest) {
     // three seconds of the word "fetching" is a picture of this test runner
     // rather than of a device on somebody's shelf.
     stipple::platform::simulator::SimulatorHttpClient http;
-    http.setDefaultAnswer(
-        200,
-        R"({"current":{"temperature_2m":21.4,"weather_code":61},)"
-        R"("daily":{"temperature_2m_max":[23.1],"temperature_2m_min":[12.8]}})");
+    // Plausible data per API, matched on the host in the URL.
+    //
+    // One canned body for everything was the first version and stopped
+    // working the moment a second API was involved: a weather reply has no
+    // subscriber count in it, so the YouTube card showed "fetching" for
+    // three seconds. The harness cannot know which URL a card will ask for
+    // until it has drawn once, so the routes are registered as the requests
+    // appear.
+    //
+    // Stand-ins, and labelled as such: the shop cannot know what is on
+    // anybody's channel.
+    const auto answerFor = [](const std::string& url) -> std::string {
+        if (url.find("socialcounts") != std::string::npos) {
+            return R"({"counters":{"estimation":{"subscriberCount":12400,)"
+                   R"("viewCount":982143,"videoCount":109},)"
+                   R"("api":{"subscriberCount":12400,"viewCount":982143,)"
+                   R"("videoCount":109}}})";
+        }
+        if (url.find("air-quality") != std::string::npos) {
+            return R"({"current":{"time":"2026-09-29T08:00","pm2_5":20.7,)"
+                   R"("pm10":24.5,"european_aqi":43}})";
+        }
+        if (url.find("ipify") != std::string::npos ||
+            url.find("checkip") != std::string::npos) {
+            // What these services actually return: the address and nothing
+            // else. No JSON, no trailing newline worth relying on.
+            return "203.0.113.42";
+        }
+        if (url.find("contributions") != std::string::npos) {
+            std::string body = R"({"total":{"lastYear":928},"contributions":[)";
+            for (int i = 0; i < 365; ++i) {
+                if (i > 0) { body += ','; }
+                // A year that looks like somebody's: busier midweek, quiet
+                // at the edges, with a couple of dead fortnights.
+                int level = (i % 7 == 0 || i % 7 == 6) ? (i % 3 == 0 ? 1 : 0)
+                                                       : (1 + (i * 7) % 4);
+                if ((i / 14) % 9 == 3) { level = 0; }
+                body += R"({"date":"2026-01-01","count":)" + std::to_string(level * 3) +
+                        R"(,"level":)" + std::to_string(level) + "}";
+            }
+            return body + "]}";
+        }
+        return R"({"current":{"temperature_2m":21.4,"weather_code":61},)"
+               R"("daily":{"time":["2026-09-27"],)"
+               R"("temperature_2m_max":[23.1],"temperature_2m_min":[12.8],)"
+               R"("sunrise":["2026-09-27T07:23"],"sunset":["2026-09-27T19:34"]}})";
+    };
+
+    // Registered up front and matched on a fragment of the URL, because the
+    // first fetch has to get the right body. Answering it with the wrong one
+    // still counts as a success, and the feed would then not ask again for
+    // the length of its interval - half an hour, against a three-second
+    // card.
+    http.answerMatching("socialcounts", 200, answerFor("socialcounts"));
+    http.answerMatching("contributions", 200, answerFor("contributions"));
+    http.answerMatching("air-quality", 200, answerFor("air-quality"));
+    http.answerMatching("ipify", 200, answerFor("ipify"));
+    http.answerMatching("checkip", 200, answerFor("checkip"));
+
+    // Anything unrecognised still answers, so a new script that fetches gets
+    // a card rather than three seconds of the word "fetching".
+    http.setDefaultAnswer(200, answerFor(""));
 
     for (const Example& example : loadExamples()) {
         if (example.source.empty()) { continue; }
@@ -657,6 +1046,13 @@ STIPPLE_TEST(ShopScripts, WriteFramesOnRequest) {
             // Answer whatever the script asked for on its last frame. A slow
             // walk rather than a constant, so a graph has something to draw
             // and a threshold has something to cross.
+            //
+            // Plausible per topic where the topic says what it means. One
+            // number for everything was the first version, and it made the
+            // energy balance meaningless: solar, house load and battery
+            // charge were all the same value, so every segment of the bar
+            // came out the same width and the picture said nothing. A
+            // preview that cannot be wrong is also one that cannot be right.
             for (const std::string& filter : broker.watched) {
                 if (filter.find('+') != std::string::npos ||
                     filter.find('#') != std::string::npos) {
@@ -664,7 +1060,26 @@ STIPPLE_TEST(ShopScripts, WriteFramesOnRequest) {
                 }
                 stipple::platform::MqttMessage reading;
                 reading.topic = filter;
-                reading.payload = std::to_string(300 + (frame * 47) % 3400);
+
+                // A sunny afternoon with the car plugged in: solar covers the
+                // house and most of the car, the battery tops it up, and a
+                // little goes back to the grid.
+                const int walk = static_cast<int>((frame * 47) % 900);
+                if (filter.find("pvPower") != std::string::npos) {
+                    reading.payload = std::to_string(4200 + walk);
+                } else if (filter.find("homePower") != std::string::npos) {
+                    reading.payload = std::to_string(600 + walk / 3);
+                } else if (filter.find("gridPower") != std::string::npos) {
+                    reading.payload = std::to_string(-400 + walk / 2);
+                } else if (filter.find("batterySoc") != std::string::npos) {
+                    reading.payload = std::to_string(48 + (frame / 12) % 40);
+                } else if (filter.find("batteryPower") != std::string::npos) {
+                    reading.payload = std::to_string(-900 + walk / 2);
+                } else if (filter.find("chargePower") != std::string::npos) {
+                    reading.payload = std::to_string(3300 + walk / 4);
+                } else {
+                    reading.payload = std::to_string(300 + (frame * 47) % 3400);
+                }
                 gateway.deliver(reading);
             }
 
@@ -687,10 +1102,72 @@ STIPPLE_TEST(ShopScripts, WriteFramesOnRequest) {
     }
 }
 
+// The built-in apps, for the landing page.
+//
+// Same format and same reason as WriteFramesOnRequest, but for the apps that
+// ship in the firmware rather than the scripts in the library. Set
+// STIPPLE_DEFAULT_FRAMES=<directory>.
+STIPPLE_TEST(ShopScripts, WriteDefaultAppFramesOnRequest) {
+    const char* directory = std::getenv("STIPPLE_DEFAULT_FRAMES");
+    if (directory == nullptr) {
+        return;
+    }
+
+    constexpr int kFrames = 90;
+    constexpr std::uint64_t kFrameMillis = 33;
+
+    const auto dump = [&](const char* name, int frames, auto&& draw) {
+        const std::string path = std::string(directory) + "/" + name + ".rgb";
+        std::FILE* out = std::fopen(path.c_str(), "wb");
+        if (out == nullptr) {
+            return;
+        }
+        Framebuffer framebuffer;
+        Canvas canvas(framebuffer);
+        for (int frame = 0; frame < frames; ++frame) {
+            draw(canvas, static_cast<std::uint64_t>(frame) * kFrameMillis);
+            for (int y = 0; y < Framebuffer::kHeight; ++y) {
+                for (int x = 0; x < Framebuffer::kWidth; ++x) {
+                    const stipple::Rgb pixel = framebuffer.at(x, y);
+                    const unsigned char triple[3] = {pixel.r, pixel.g, pixel.b};
+                    std::fwrite(triple, 1, 3, out);
+                }
+            }
+        }
+        std::fclose(out);
+        std::printf("    [frames] %s: %d frames\n", name, frames);
+    };
+
+    // 14:37:22 UTC, the same moment the library previews use. Two seconds so
+    // the colon is seen to blink.
+    dump("clock", kFrames, [](Canvas& canvas, std::uint64_t millis) {
+        stipple::platform::simulator::SimulatorClock clock;
+        clock.setWallClock(1762699042);
+        clock.advance(millis);
+        stipple::apps::renderClock(canvas, clock, stipple::apps::ClockStyle{});
+    });
+
+    stipple::apps::Stopwatch watch;
+    watch.press(0);
+    dump("stopwatch", kFrames, [&](Canvas& canvas, std::uint64_t millis) {
+        stipple::apps::renderStopwatch(canvas, watch, millis,
+                                       stipple::apps::StopwatchStyle{});
+    });
+
+    stipple::platform::BatteryStatus status;
+    status.known = true;
+    status.percent = 64;
+    status.chargingKnown = true;
+    status.charging = true;
+    dump("battery", 1, [&](Canvas& canvas, std::uint64_t) {
+        stipple::apps::renderBattery(canvas, status, stipple::apps::BatteryStyle{});
+    });
+}
+
 // Not a test so much as a way to look at them.
 //
 // "Does this look right on a 52x16 panel" cannot be asserted, only seen. Set
-// STIPPLE_SHOP_PREVIEW=<directory> and this writes one PNG per script per
+// STIPPLE_SHOP_PREVIEW=<directory>
 // sampled frame; without it, it does nothing and costs nothing.
 STIPPLE_TEST(ShopScripts, PreviewsOnRequest) {
     const char* directory = std::getenv("STIPPLE_SHOP_PREVIEW");
@@ -732,7 +1209,7 @@ STIPPLE_TEST(ShopScripts, PreviewsOnRequest) {
                 // Play it, rather than watch it fall. A preview of a game
                 // showing its game-over screen is a preview of nothing.
                 if (frame % 12 == 0) {
-                    store.button("shop", "action");
+                    store.button("shop", "select");
                 }
             }
             previous = target;

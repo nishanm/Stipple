@@ -185,6 +185,7 @@ add_library(stipple_core
     src/scene/Scene.cpp
     src/audio/Melody.cpp
     src/audio/Tone.cpp
+    src/audio/Sound.cpp
     src/time/Timezone.cpp
     src/net/DhcpClient.cpp
     src/net/HttpFetch.cpp
@@ -210,6 +211,7 @@ add_library(stipple_core
     src/apps/StopwatchApp.cpp
     src/apps/VisualizerApp.cpp
     src/apps/Unavailable.cpp
+    src/script/ScriptConfig.cpp
     src/script/ScriptMqtt.cpp
     src/script/ScriptRunner.cpp
     src/apps/SplashScreen.cpp
@@ -370,6 +372,20 @@ if(STIPPLE_DEVICE_BUILD)
     target_compile_options(stipple_audio_probe PRIVATE
         -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wsign-conversion)
     target_link_libraries(stipple_audio_probe PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
+# Whether the vendor's own player can play a file, and which EMediaType is
+# audio. Dynamic for the same reason as the others - it dlopens
+# libzkmedia.so - and it makes a noise, so it is not read-only and is not part
+# of tooling/probe.
+#
+# The finding that made it worth writing: libzkmedia exports
+# PlayerFactory::getInstance and ::create, so the object is allocated by code
+# that knows its size. The "C++ class of unknown size" objection recorded in
+# the findings doc does not apply through a factory.
+if(STIPPLE_DEVICE_BUILD)
+    add_executable(stipple_player_probe tools/player_probe/main.cpp)
+    target_link_libraries(stipple_player_probe PRIVATE ${CMAKE_DL_LIBS} stipple_warnings)
 endif()
 
 # The last unknown in the display protocol: channel order.

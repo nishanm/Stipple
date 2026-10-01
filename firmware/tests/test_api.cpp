@@ -45,6 +45,8 @@ struct RecordingInput : stipple::platform::IInputSink {
 };
 
 struct Fixture {
+    /// Optional capabilities, so a test can ask for a device that genuinely
+    /// lacks one. Defaulted, so every existing call site is unchanged.
     SimulatorPlatform platform;
     AppRegistry apps;
     Carousel carousel{apps};
@@ -58,6 +60,10 @@ struct Fixture {
 
     explicit Fixture(ApiOptions options = ApiOptions{})
         : server(makeContext(), std::move(options)) {}
+
+    Fixture(stipple::platform::simulator::SimulatorCapabilities capabilities,
+            ApiOptions options)
+        : platform(capabilities), server(makeContext(), std::move(options)) {}
 
     ApiContext makeContext() {
         ApiContext context;
@@ -1454,4 +1460,112 @@ STIPPLE_TEST(Assets, TheCollectionStaysMetadataOnly) {
     STIPPLE_CHECK_EQ(all.status, 200);
     STIPPLE_CHECK(all.body.find("\"quad\"") != std::string::npos);
     STIPPLE_CHECK(all.body.find("\"pixels\"") == std::string::npos);
+}
+
+// --- the speaker -------------------------------------------------------------
+//
+// Until this route existed, nothing but a notification could make the device
+// make a noise. These hold down the two things that matter about it: it plays
+// only sounds the device can actually play, and it says so rather than
+// pretending when there is no speaker behind it (ADR 0013).
+
+STIPPLE_TEST(Api, TheSoundRouteIsRouted) {
+    STIPPLE_CHECK(matchRoute("/api/v1/sound").resource == Resource::Sound);
+}
+
+STIPPLE_TEST(Api, ANamedSoundReachesTheSpeaker) {
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound", R"({"sound":"chime"})").status, 204);
+
+    const auto& played = fixture.platform.simulatedAudio().requests();
+    STIPPLE_REQUIRE(played.size() == std::size_t{1});
+    STIPPLE_CHECK_FALSE(played[0].isTone);
+    STIPPLE_CHECK(played[0].sound == "chime");
+}
+
+STIPPLE_TEST(Api, AnUnknownSoundIs422AndPlaysNothing) {
+    // 422 rather than 404: the route exists and the JSON was fine, the name
+    // just is not one this device can make. Substituting a beep would be the
+    // lie the catalogue exists to prevent.
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound", R"({"sound":"trumpet"})").status, 422);
+    STIPPLE_CHECK(fixture.platform.simulatedAudio().requests().empty());
+}
+
+STIPPLE_TEST(Api, AnInlineToneIsPlayedAndBounded) {
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound",
+                     R"({"frequencyHz":880,"durationMillis":200})").status, 204);
+
+    const auto& played = fixture.platform.simulatedAudio().requests();
+    STIPPLE_REQUIRE(played.size() == std::size_t{1});
+    STIPPLE_CHECK(played[0].isTone);
+    STIPPLE_CHECK_EQ(played[0].frequencyHz, 880);
+    STIPPLE_CHECK_EQ(played[0].durationMillis, 200);
+}
+
+STIPPLE_TEST(Api, AToneOutsideTheLimitsIsRefused) {
+    // The same ceilings a script gets. The network has no business reaching
+    // further into the speaker than the device's own code does.
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound", R"({"frequencyHz":1})").status, 422);
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound", R"({"frequencyHz":40000})").status, 422);
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound",
+                     R"({"frequencyHz":880,"durationMillis":60000})").status, 422);
+    STIPPLE_CHECK(fixture.platform.simulatedAudio().requests().empty());
+}
+
+STIPPLE_TEST(Api, ARequestWithNothingToPlayIsABadRequest) {
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(fixture.call("POST", "/api/v1/sound", "{}").status, 400);
+}
+
+STIPPLE_TEST(Api, StopIsItsOwnRequest) {
+    // "stop" is not a sound, and a caller asking for silence should not have
+    // to know that the catalogue happens not to contain one.
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound", R"({"stop":true})").status, 204);
+    STIPPLE_CHECK_EQ(fixture.platform.simulatedAudio().stopCount(), std::uint32_t{1});
+}
+
+STIPPLE_TEST(Api, GettingTheSoundRouteListsWhatThisDeviceCanPlay) {
+    // So a UI can offer the catalogue instead of hard-coding it, which is how
+    // the web page's dropdown came to list three of the five sounds that
+    // existed.
+    Fixture fixture;
+    const Response response = fixture.call("GET", "/api/v1/sound");
+    STIPPLE_CHECK_EQ(response.status, 200);
+
+    for (const char* name : {"beep", "chime", "alert", "tick", "tock"}) {
+        STIPPLE_CHECK(response.body.find(std::string("\"") + name + "\"") !=
+                      std::string::npos);
+    }
+    STIPPLE_CHECK(response.body.find("durationMillis") != std::string::npos);
+    // Silence is a valid setting and not a sound, so a dropdown needs it named
+    // separately rather than inferred.
+    STIPPLE_CHECK(response.body.find("\"none\"") != std::string::npos);
+}
+
+STIPPLE_TEST(Api, ADeviceWithNoSpeakerSaysSoRatherThanAccepting) {
+    stipple::platform::simulator::SimulatorCapabilities mute;
+    mute.audio = false;
+    Fixture fixture(mute, ApiOptions{});
+
+    // 404 on both verbs: there is nothing here on this device, which is a
+    // different answer from "your request was wrong".
+    STIPPLE_CHECK_EQ(
+        fixture.call("POST", "/api/v1/sound", R"({"sound":"chime"})").status, 404);
+    STIPPLE_CHECK_EQ(fixture.call("GET", "/api/v1/sound").status, 404);
+}
+
+STIPPLE_TEST(Api, TheSoundRouteRejectsOtherVerbs) {
+    Fixture fixture;
+    STIPPLE_CHECK_EQ(fixture.call("DELETE", "/api/v1/sound").status, 405);
 }

@@ -953,6 +953,27 @@ void ScriptHost::setAudio(platform::IAudioOutput* audio) noexcept {
     audio_ = audio;
 }
 
+bool ScriptHost::setStored(std::string_view key, Stored value) {
+    if (key.empty() || key.size() > kMaxStoreKeyBytes) {
+        return false;
+    }
+    if (value.kind == Stored::Kind::Text && value.text.size() > kMaxStoreTextBytes) {
+        value.text.resize(kMaxStoreTextBytes);
+    }
+
+    for (auto& entry : store_) {
+        if (entry.first == key) {
+            entry.second = std::move(value);
+            return true;
+        }
+    }
+    if (store_.size() >= kMaxStoreKeys) {
+        return false;
+    }
+    store_.emplace_back(std::string(key), std::move(value));
+    return true;
+}
+
 void ScriptHost::setMqtt(IScriptMqtt* mqtt, std::string_view scriptId) {
     mqtt_ = mqtt;
     scriptId_.assign(scriptId);

@@ -259,6 +259,7 @@ private:
     Response handleDisplayFrame(const Request& request);
     Response handleInput(const Request& request, std::uint64_t nowMillis);
     Response handleGlucoseAlarmTest(const Request& request, std::uint64_t nowMillis);
+    Response handleSound(const Request& request);
 
     ApiContext context_;
     ApiOptions options_;

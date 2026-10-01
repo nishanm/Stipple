@@ -66,6 +66,22 @@ bool SimulatorHttpClient::begin(const HttpRequest& request) {
 
     const Route* route = findRoute(url);
     if (route == nullptr) {
+        // An exact route wins; a fragment match is the fallback before the
+        // blanket default.
+        for (const Match& match : matches_) {
+            if (url.find(match.fragment) != std::string_view::npos) {
+                pendingStatus_ = match.status;
+                pendingBody_ = match.body;
+                pendingFailure_.clear();
+                hanging_ = false;
+                readyAtMillis_ = 0;
+                latencyMillis_ = 0;
+                stage_ = Stage::Running;
+                return true;
+            }
+        }
+    }
+    if (route == nullptr) {
         pendingStatus_ = defaultStatus_;
         pendingBody_ = defaultBody_;
         pendingFailure_ = defaultFailure_;

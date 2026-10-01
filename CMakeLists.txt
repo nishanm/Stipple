@@ -8,7 +8,7 @@
 cmake_minimum_required(VERSION 3.18)
 
 project(stipple
-    VERSION 0.2.3
+    VERSION 0.2.9
     DESCRIPTION "Open pixel firmware for the Ulanzi TC002"
     # C as well as C++: Berry is ANSI C99 (ADR 0022), and the probe tools
     # under firmware/tools/ have always been C.

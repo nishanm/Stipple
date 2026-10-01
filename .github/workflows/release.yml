@@ -225,16 +225,92 @@ jobs:
       - name: Verify emulator module
         run: node simulator/web/tools/verify.mjs
 
-      # Taken from the CI run above rather than rebuilt here. CI builds it in
-      # the pinned container and checks it can actually load on a device -
-      # glibc 2.30, no GLIBCXX - and a rebuild on this runner would be a
-      # different binary than the one those checks passed on.
-      - name: Fetch the device library from CI
-        uses: actions/download-artifact@v4
-        with:
-          name: libstipple-so
-          path: dist
+      # Built here, from the bumped tree, and not taken from the CI run.
+      #
+      # **This shipped a wrong binary once and the failure was silent.** The
+      # release used to download CI's `libstipple-so` artifact, which is built
+      # by the `verify` job from the commit as it stands - before the bump
+      # exists, because the bump is applied to each job's own working tree and
+      # only committed at publish time. So the file was renamed
+      # `libstipple-0.2.4.so` while the binary inside reported 0.2.3, and
+      # installing it looked like a no-op: the device took the update and went
+      # on saying the old version, through a reboot.
+      #
+      # Rebuilding here costs about two minutes and makes the artifact the
+      # thing the version says it is. CI still builds and checks its own copy,
+      # which is what gates the release; this is the copy that ships.
+      - name: Build the pinned cross toolchain
+        run: docker build -t stipple-cross:bullseye -f tooling/cross/Containerfile.bullseye tooling/cross
 
+      - name: Build the device library
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" stipple-cross:bullseye bash -c "
+            cd /src &&
+            cmake -S . -B build/device-arm -G Ninja \
+              -DCMAKE_TOOLCHAIN_FILE=/src/cmake/toolchains/arm-linux-gnueabihf.cmake \
+              -DCMAKE_BUILD_TYPE=Release -DSTIPPLE_BUILD_TESTS=OFF \
+              -DSTIPPLE_WARNINGS_AS_ERRORS=ON -DSTIPPLE_DEVICE_BUILD=ON &&
+            cmake --build build/device-arm --target stipple_startup"
+          mkdir -p dist
+          cp build/device-arm/firmware/libstipple.so dist/libstipple.so
+
+      # The same load-safety checks CI runs, on the copy that actually ships.
+      # A library that verifies here and fails at dlopen on the device is a
+      # failure only visible over ADB; that happened during bring-up and cost
+      # two flashes.
+      - name: Check the library can load on a device
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/src" stipple-cross:bullseye bash -c '
+            cd /src
+            lib=dist/libstipple.so
+            arm-linux-gnueabihf-readelf -d "$lib" | grep NEEDED
+
+            if arm-linux-gnueabihf-readelf -V "$lib" | grep -q GLIBCXX; then
+              echo "::error::libstipple.so wants GLIBCXX symbols the device does not have"
+              exit 1
+            fi
+
+            worst=$(arm-linux-gnueabihf-readelf -V "$lib" | grep -o "GLIBC_[0-9.]*" | sort -u -V | tail -1)
+            echo "highest glibc requirement: $worst"
+            newest=$( { echo "$worst"; echo GLIBC_2.30; } | sort -V | tail -1 )
+            if [ "$newest" != "GLIBC_2.30" ]; then
+              echo "::error::libstipple.so needs $worst; the TC002 has GLIBC_2.30"
+              exit 1
+            fi
+          '
+
+      # The check that would have caught the wrong binary in seconds.
+      #
+      # kVersion is what the device reports over /api/v1/version and paints on
+      # the splash, and it is compiled in - so if the string is not in the
+      # library, the library is not this release whatever the filename says.
+      - name: Check the library reports this version
+        run: |
+          set -euo pipefail
+
+          # kVersion is compiled in - it is what the device reports over
+          # /api/v1/version and paints on the splash - so if the string is
+          # not in the library, the library is not this release whatever
+          # the filename says.
+          #
+          # Matched as a whole version rather than a substring, and both
+          # halves of that matter. `grep "0.2.4"` treats the dots as
+          # wildcards, so it matches "0x2y4"; and unanchored, "0.2.4"
+          # matches inside "10.2.42". The first version of this check did
+          # both and passed on the very binary it was written to reject.
+          versions=$(grep -aoE '(^|[^0-9.])[0-9]+\.[0-9]+\.[0-9]+([^0-9.]|$)' dist/libstipple.so \
+                     | grep -aoE '[0-9]+\.[0-9]+\.[0-9]+' | sort -u)
+
+          if echo "$versions" | grep -qxF "${VERSION}"; then
+            echo "libstipple.so reports ${VERSION}"
+          else
+            echo "::error::libstipple.so does not report ${VERSION} - it is not this release"
+            echo "versions found in it:"
+            echo "$versions" | head -20
+            exit 1
+          fi
       - name: Assemble artifacts
         run: |
           set -euo pipefail

@@ -1,6 +1,6 @@
 # name: Matrix
 # summary: Matrix visuals
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation
 # panel: 52x16
 

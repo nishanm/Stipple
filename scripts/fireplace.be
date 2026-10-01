@@ -1,6 +1,6 @@
 # name: Fireplace
 # summary: Procedural fire, the whole panel. Embers, a coal bed and no two frames alike.
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation
 # panel: 52x16
 
@@ -28,22 +28,6 @@ class App
     self.a = []
     self.b = []
 
-    # 52 x 16 cells, flat. A list of lists would be tidier and would cost an
-    # index lookup per cell on a device drawing 832 of them.
-    #
-    # Seeded already burning, hot at the bottom and cooling upward, rather
-    # than from a cold grid.
-    #
-    # From cold the flames take about three seconds to climb sixteen rows,
-    # and this app arrives by carousel: the first thing anybody would see of
-    # it is a black panel that slowly admits to being a fire. Starting warm
-    # costs one pass here and the simulation settles into its own shape
-    # within a second anyway.
-    # With noise, not a clean gradient. A gradient seeds the panel with
-    # sixteen flat bands, which on the first frame reads as a colour chart
-    # rather than as a fire - worse than starting black, because it looks
-    # deliberate. The noise makes the very first frame irregular, and the
-    # simulation takes it from there.
     var seed = self.seed
     var i = 0
     while i < 832
@@ -63,9 +47,6 @@ class App
     self.seed = seed
   end
 
-  # A linear congruential generator, because the fire needs a great many
-  # small random numbers and math.rand() is not seeded per script - two
-  # fireplaces side by side would burn identically.
   def rnd(n)
     self.seed = (self.seed * 1103515245 + 12345) % 2147483647
     if self.seed < 0
@@ -81,12 +62,6 @@ class App
     end
     self.last = n
 
-    # Everything the loops touch is pulled into a local first.
-    #
-    # Not premature: this runs 832 cells a frame, and `self.a[i]` is a member
-    # lookup and then an index where `a[i]` is just an index. The first
-    # version of this script spent 262,144 instructions a frame against a
-    # budget of 200,000 and lost every frame it tried to simulate on.
     var a = self.a
     var b = self.b
     var w = width()
@@ -120,22 +95,6 @@ class App
       p += 1
     end
 
-    # Heat rises, averaged with its neighbours and with the row two below -
-    # that second term is what makes flames connect into tongues instead of
-    # breaking into separate dots.
-    #
-    # Half the rows each pass, alternating.
-    #
-    # Simulating all fifteen and drawing a full panel in the same frame put
-    # the worst frame inside the last heartbeat before the budget kills it -
-    # and because the budget is only checked every 65,536 instructions, there
-    # was no way to tell whether it was near the edge or on it. Every row
-    # still updates every 140 ms, which for a diffusion this soft is not a
-    # difference you can see.
-    #
-    # The rows not simulated are copied rather than left: they live in the
-    # other buffer, and a copy is two operations against the seventy a
-    # simulated cell costs.
     var phase = self.phase
     self.phase = 1 - phase
 
@@ -163,9 +122,6 @@ class App
         var below = belowRow + x
         var h = a[below]
 
-        # At the edges the missing neighbour is counted as the cell itself,
-        # so the average stays over four samples and the outermost columns do
-        # not run cold.
         if x > 0
           h += a[below - 1]
         else
@@ -181,9 +137,6 @@ class App
         h += a[twoBelow + x]
         h = h / 4
 
-        # One random number, used for both the cooling and the sideways
-        # turbulence. Two calls a cell was 1,600 a frame; the fire does not
-        # look any different for sharing one.
         seed = (seed * 1103515245 + 12345) % 2147483647
         if seed < 0
           seed = -seed
@@ -266,17 +219,6 @@ class App
 
     clear(0x010000)
 
-    # Drawn as horizontal runs, not as pixels.
-    #
-    # The colours are eight bands rather than a gradient - an LED panel has
-    # no subtlety to spend, and hard steps read as fire where a smooth ramp
-    # reads as an orange smear. That banding is also what makes runs worth
-    # having: neighbouring cells usually land in the same band, so a row of
-    # 52 becomes a handful of rect_fill calls instead of 52 pixel ones.
-    #
-    # It matters because this is the most expensive script here. Per-pixel
-    # with a dot() method it cost 262,144 instructions a frame against a
-    # budget of 200,000 and lost every frame it simulated on.
     var a = self.a
     var w = width()
     var i = 0

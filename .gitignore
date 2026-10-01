@@ -82,7 +82,9 @@ private/
 # Copied beside the API page at build time so Redoc can fetch it.
 site/api/openapi.yaml
 
-# Assembled locally by 'dev.ps1 site' to mirror what Pages publishes.
+# Assembled locally by 'dev.ps1 site' for a preview. The emulator is not
+# published to Pages - it lives at 'dev.ps1 serve', where somebody working on
+# the renderer already is.
 site/emulator/
 
 # Script previews, generated from real rendered frames by
@@ -90,6 +92,30 @@ site/emulator/
 # committed: half a megabyte of binaries rewritten whenever a script changes
 # is repository weight for something reproducible in a minute.
 site/shop/*.gif
+site/defaults/*.gif
+
+# The shop page itself, for the same reason and a better one.
+#
+# It is generated from scripts/ by tooling/site/build-shop.py and rebuilt by
+# the Pages job on every deploy, so committing it bought nothing. What it
+# cost was the submission promise: adding a script was supposed to be one
+# file and a pull request, and a committed page meant every contributor also
+# had to run a Python script and commit a two-hundred-line diff of generated
+# HTML - or watch CI fail on a check they had no reason to expect.
+#
+# CI still runs the generator, because that is what catches a script with no
+# `# name:` header. It just no longer demands the output match a file in the
+# repository.
+site/shop/index.html
+
+# The reference pages, rendered from docs/ by tooling/site/build-docs.py.
+#
+# Same reasoning again, and the sharper version of it: docs/scripting.md and
+# docs/mqtt.md are the documents. Committing a rendering of them puts a
+# second copy of the same sentences in the tree, and the moment somebody
+# corrects a typo in the HTML the two disagree about which is true.
+site/scripting/index.html
+site/mqtt/index.html
 
 # Integration scripts that run somewhere else.
 #

@@ -90,9 +90,6 @@ class App
     line(26, 0, bx, by, rod)
     rect_fill(bx - 1, by - 1, 3, 3, bob)
 
-    # Four dots for the bar. The one we are on is lit, and it fills across
-    # as the beat passes - so the eye has something to follow between
-    # clicks, which is the whole job of a metronome you can see.
     var b = n % 4
     var k = 0
     while k < 4
@@ -111,9 +108,6 @@ class App
 
     text(1, 9, str(bpm), rgb(110, 110, 110))
 
-    # Say it, rather than leaving somebody to wonder whether the volume is
-    # down. A device with no speaker and a device turned all the way down
-    # sound identical from across the room.
     if !audio_known()
       text(27, 9, "MUTE", rgb(150, 40, 40))
     end

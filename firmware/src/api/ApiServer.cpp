@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "stipple/api/ApiServer.h"
 
+#include "stipple/platform/MqttClient.h"
 #include "stipple/update/ElfCheck.h"
 
 #include "stipple/update/UpdateImage.h"
@@ -8,6 +9,7 @@
 #include <vector>
 
 #include "stipple/api/JsonWriter.h"
+#include "stipple/audio/Sound.h"
 #include "stipple/app/AppRegistry.h"
 #include "stipple/core/Base64.h"
 #include "stipple/render/FrameScheduler.h"
@@ -37,6 +39,17 @@
 namespace stipple {
 namespace api {
 namespace {
+
+/// Bounds on an inline tone from the network.
+///
+/// The same ceilings a script gets, deliberately: there is no reason the API
+/// should reach further into the speaker than the device's own code does. The
+/// floor is there because a 1 Hz "tone" is not audible, it is just the
+/// speaker being held for a second.
+constexpr std::int64_t kMinToneHz = 50;
+constexpr std::int64_t kMaxToneHz = 8000;
+constexpr std::int64_t kMaxToneMillis = 5000;
+constexpr std::int64_t kDefaultToneMillis = 150;
 
 /// A parsed request body, owning its token storage.
 ///
@@ -294,6 +307,7 @@ Response ApiServer::handle(const Request& request, std::uint64_t nowMillis) {
         case Resource::DisplayFrame: return handleDisplayFrame(request);
         case Resource::Input: return handleInput(request, nowMillis);
         case Resource::GlucoseAlarmTest: return handleGlucoseAlarmTest(request, nowMillis);
+        case Resource::Sound: return handleSound(request);
         case Resource::Unknown: break;
     }
     return notFound("no such endpoint");
@@ -490,6 +504,98 @@ Response ApiServer::handleInput(const Request& request, std::uint64_t nowMillis)
     return noContent();
 }
 
+Response ApiServer::handleSound(const Request& request) {
+    platform::IAudioOutput* speaker =
+        context_.platform != nullptr ? context_.platform->audio() : nullptr;
+
+    // Absence is reported rather than swallowed (ADR 0013). A route that
+    // accepted sounds on a device with no speaker would answer 204 for ever
+    // and the caller would have no way to find out why the room was quiet.
+    if (speaker == nullptr) {
+        return notFound("this device has no speaker");
+    }
+
+    if (request.method == Method::Get) {
+        // The catalogue, so a caller can offer it rather than hard-code it.
+        std::size_t count = 0;
+        const audio::Sound* sounds = audio::SoundLibrary::all(count);
+
+        JsonWriter writer;
+        writer.beginObject().key("sounds").beginArray();
+        for (std::size_t i = 0; i < count; ++i) {
+            writer.beginObject()
+                .member("name", sounds[i].name)
+                .member("durationMillis", sounds[i].durationMillis())
+                .endObject();
+        }
+        writer.endArray();
+        // Reported alongside the list because "silent" is a valid setting and
+        // not a sound, so a UI building a dropdown needs both facts.
+        writer.member("silentName", "none").endObject();
+        return ok(writer.take());
+    }
+
+    if (request.method != Method::Post) {
+        return methodNotAllowed();
+    }
+
+    Body body(request.body, options_.maxJsonTokens, options_.maxBodyBytes);
+    if (!body.valid()) {
+        return badRequest(std::string("invalid JSON: ") + body.errorText());
+    }
+
+    const json::Value root = body.root();
+    if (!root.isObject()) {
+        return badRequest("body must be a JSON object");
+    }
+
+    // Stopping is its own request rather than a magic name, because "stop" is
+    // not a sound and a caller asking for silence should not have to know
+    // that the catalogue happens not to contain it.
+    if (const json::Value stop = root["stop"]; stop.isBoolean() && stop.toBool(false)) {
+        speaker->stop();
+        return noContent();
+    }
+
+    if (const json::Value name = root["sound"]; name.isString()) {
+        const std::string wanted = name.toString();
+        if (!speaker->playSound(wanted)) {
+            // 422 rather than 404: the route exists and the request was
+            // well-formed, the name just is not one this device can make.
+            // GET this path to find out which are.
+            return unprocessable("'sound' is not a sound this device can play");
+        }
+        return noContent();
+    }
+
+    // An inline tone, for a caller that wants a noise the catalogue does not
+    // have. Bounded at both ends: the limits match what a script gets, because
+    // there is no reason the network should reach further into the speaker
+    // than the device's own code does.
+    const json::Value frequency = root["frequencyHz"];
+    if (!frequency.isNumber()) {
+        return badRequest("'sound', 'frequencyHz' or 'stop' is required");
+    }
+
+    const std::int64_t hz = frequency.toInt(0);
+    if (hz < kMinToneHz || hz > kMaxToneHz) {
+        return unprocessable("'frequencyHz' is out of range");
+    }
+
+    std::int64_t millis = kDefaultToneMillis;
+    if (const json::Value duration = root["durationMillis"]; duration.isNumber()) {
+        millis = duration.toInt(0);
+        if (millis <= 0 || millis > kMaxToneMillis) {
+            return unprocessable("'durationMillis' is out of range");
+        }
+    }
+
+    if (!speaker->playTone(static_cast<int>(hz), static_cast<int>(millis))) {
+        return unprocessable("the speaker refused the tone");
+    }
+    return noContent();
+}
+
 // --- device information ------------------------------------------------------
 
 Response ApiServer::handleDevice(const Request& request) {
@@ -570,7 +676,13 @@ Response ApiServer::handleDevice(const Request& request) {
             .member("network", context_.platform->network() != nullptr)
             .member("reboot", context_.platform->rebooter() != nullptr)
             .member("battery", context_.platform->power() != nullptr)
-            .member("microphone", context_.platform->microphone() != nullptr);
+            .member("microphone", context_.platform->microphone() != nullptr)
+            // Not "is MQTT available" - that is the mqtt pointer - but "can
+            // the transport do TLS if asked". A page that offers the switch
+            // without knowing turns a missing feature into a broker that
+            // mysteriously stopped answering.
+            .member("mqttTls", context_.platform->mqtt() != nullptr &&
+                                   context_.platform->mqtt()->supportsTls());
     }
     writer.endObject();
 
@@ -1494,6 +1606,38 @@ void writeScript(JsonWriter& writer, const script::Script& entry, bool withSourc
     writer.endObject();
 }
 
+/// The `@config` fields a script declared, with what each currently holds.
+///
+/// Only on the single-script fetch. The list view is metadata, and the editor
+/// is the only place anybody fills a form in.
+void writeSettings(JsonWriter& writer, const script::IScriptRunner& scripts,
+                   const std::string& id) {
+    writer.key("settings").beginArray();
+    for (const script::Setting& setting : scripts.settings(id)) {
+        writer.beginObject()
+            .member("key", setting.key)
+            .member("type", script::settingTypeName(setting.type))
+            .member("label", setting.label)
+            .member("help", setting.help)
+            .member("default", setting.fallback);
+
+        // Empty means nothing has been set and the script's own fallback
+        // applies. Deliberately distinct from a stored empty string, which
+        // is a value somebody chose.
+        writer.member("value", scripts.settingValue(id, setting.key));
+
+        if (setting.type == script::Setting::Type::Text && setting.maxLength > 0) {
+            writer.member("maxLength", static_cast<std::int64_t>(setting.maxLength));
+        }
+        if (setting.type == script::Setting::Type::Number && setting.bounded) {
+            writer.member("minimum", static_cast<std::int64_t>(setting.minimum));
+            writer.member("maximum", static_cast<std::int64_t>(setting.maximum));
+        }
+        writer.endObject();
+    }
+    writer.endArray();
+}
+
 Response noScripting() {
     // Not a 500. The device is working exactly as built; it simply has no
     // interpreter in it, and saying "internal error" would send somebody
@@ -1633,8 +1777,80 @@ Response ApiServer::handleScriptItem(const Request& request, const std::string& 
         if (entry == nullptr) {
             return notFound("no such script");
         }
+        // Built by hand rather than through writeScript, because the
+        // settings belong inside the same object and writeScript closes it.
         JsonWriter writer;
-        writeScript(writer, *entry, /*withSource=*/true);
+        writer.beginObject();
+        writer.member("id", entry->id);
+        writer.member("name", entry->name);
+        writer.member("ok", entry->ok);
+        writer.member("problem", entry->problem);
+        writer.member("bytes", static_cast<std::int64_t>(entry->source.size()));
+        writer.member("lastInstructions",
+                      static_cast<std::int64_t>(entry->lastInstructions));
+        writer.member("memoryBytes", static_cast<std::int64_t>(entry->memoryBytes));
+        writer.member("source", entry->source);
+        writeSettings(writer, *context_.scripts, id);
+        writer.endObject();
+        return ok(writer.take());
+    }
+
+    // Settings only. The source is written by POSTing to the collection,
+    // which is a different operation with different consequences - saving a
+    // channel ID should not be able to recompile anything.
+    if (request.method == Method::Patch) {
+        if (context_.scripts->find(id) == nullptr) {
+            return notFound("no such script");
+        }
+
+        Body body(request.body, options_.maxJsonTokens, options_.maxBodyBytes);
+        if (!body.valid()) {
+            return badRequest(std::string("invalid JSON: ") + body.errorText());
+        }
+        const json::Value root = body.root();
+        if (!root.isObject()) {
+            return badRequest("body must be a JSON object");
+        }
+        const json::Value wanted = root["settings"];
+        if (!wanted.isObject()) {
+            return unprocessable("expected a \"settings\" object");
+        }
+
+        // Every field or none. A partial apply leaves the device in a state
+        // the person who sent it did not ask for and cannot see.
+        std::string refused;
+        for (int i = 0; i < wanted.size(); ++i) {
+            const json::Value key = wanted.keyAt(i);
+            const json::Value value = wanted.valueAt(i);
+            if (!key.isString()) {
+                continue;
+            }
+            std::string text;
+            if (value.isString()) {
+                text = value.toString();
+            } else if (value.isNumber()) {
+                text = std::to_string(value.toInt(0));
+            } else if (value.isBoolean()) {
+                text = value.toBool(false) ? "true" : "false";
+            } else {
+                refused = key.toString();
+                break;
+            }
+            if (!context_.scripts->setSetting(id, key.toString(), text)) {
+                refused = key.toString();
+                break;
+            }
+        }
+        if (!refused.empty()) {
+            return unprocessable("cannot set \"" + refused +
+                                 "\": no such setting, or the value does not fit it");
+        }
+
+        JsonWriter writer;
+        writer.beginObject();
+        writer.member("id", id);
+        writeSettings(writer, *context_.scripts, id);
+        writer.endObject();
         return ok(writer.take());
     }
 
@@ -2322,7 +2538,10 @@ Response ApiServer::handleFirmware(const Request& request) {
             .member("installedBytes", static_cast<std::int64_t>(upgrade->installedBytes()))
             .member("canRollBack", upgrade->hasPrevious())
             .member("maxBytes", static_cast<std::int64_t>(options_.maxImageBytes))
+            // The version of the process answering, which is not necessarily
+            // the version of the file named by `path` - see `restartPending`.
             .member("version", std::string(kVersion))
+            .member("restartPending", upgrade->restartPending())
             .endObject();
         return ok(writer.take());
     }
@@ -2336,6 +2555,7 @@ Response ApiServer::handleFirmware(const Request& request) {
         writer.beginObject()
             .member("status", "rolled-back")
             .member("rebootRequired", true)
+            .member("restartPending", upgrade->restartPending())
             .member("note", "The previous version is back. Reboot to run it.")
             .endObject();
         return ok(writer.take());
@@ -2370,6 +2590,10 @@ Response ApiServer::handleFirmware(const Request& request) {
         .member("bytes", static_cast<std::int64_t>(request.body.size()))
         .member("canRollBack", upgrade->hasPrevious())
         .member("rebootRequired", true)
+        .member("restartPending", upgrade->restartPending())
+        // The version still running, so a page can say which one it is
+        // replacing rather than leaving somebody to guess.
+        .member("runningVersion", std::string(kVersion))
         // Said plainly, because "installed" could otherwise be read as
         // "running", and the difference is a reboot.
         .member("note",

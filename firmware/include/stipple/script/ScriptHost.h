@@ -110,6 +110,17 @@ public:
     const std::vector<std::pair<std::string, Stored>>& stored() const noexcept;
     void restoreStored(std::vector<std::pair<std::string, Stored>> values);
 
+    /// Set one remembered value from outside the script.
+    ///
+    /// How a `@config` setting reaches the code that reads it: the web UI
+    /// writes here, and the script picks it up with the `store.get(key,
+    /// fallback)` it was already using. One namespace, so a script running on
+    /// a firmware too old to know about `@config` still works - it just falls
+    /// back on its own.
+    ///
+    /// False when the key is unusable or the store is full.
+    bool setStored(std::string_view key, Stored value);
+
     /// Ask the script how long it would like on screen, in milliseconds.
     ///
     /// Zero when it has no `duration()`, which means the carousel's own

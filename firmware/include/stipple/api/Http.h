@@ -151,6 +151,13 @@ enum class Resource : std::uint8_t {
     /// Play a glucose alarm melody now, so a settings page can let somebody
     /// hear what they chose. POST /api/v1/glucose/alarm/test.
     GlucoseAlarmTest,
+    /// The speaker. GET lists what this device can play, POST plays one.
+    ///
+    /// A GET as well as a POST because the catalogue is the device's answer
+    /// rather than the caller's assumption: a web UI that hard-codes a sound
+    /// list drifts the moment the list changes, and a caller guessing at
+    /// names gets a 422 it could have avoided by asking.
+    Sound,
 };
 
 struct RouteMatch {

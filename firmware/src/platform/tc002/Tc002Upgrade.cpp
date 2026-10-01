@@ -99,6 +99,10 @@ bool Tc002Upgrade::install(std::string_view image, std::string& problem) {
         return false;
     }
 
+    // Only now. Every path above leaves the running application in place, so
+    // reporting a pending restart before this point would be reporting one
+    // that is not coming.
+    restartPending_ = true;
     return true;
 }
 
@@ -117,6 +121,9 @@ bool Tc002Upgrade::rollback(std::string& problem) {
         problem = "could not put the previous version back";
         return false;
     }
+
+    // A rollback changes what loads next just as much as an install does.
+    restartPending_ = true;
     return true;
 }
 

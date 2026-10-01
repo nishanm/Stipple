@@ -6,27 +6,6 @@
 
 import string
 
-# Watches `home/power/now` for watts and draws the last hour of it.
-#
-# This is the script to copy if you want to put something from your broker on
-# the panel, and the three things it does that a first attempt usually does not
-# are the reason it is here.
-#
-# **mqtt_watch() is called every frame.** There is no "the broker connected"
-# callback a script can hook, so draw() is the only place a watch can be asked
-# for - and asking again costs nothing.
-#
-# **nil is not zero.** mqtt_get() gives nil when nothing has arrived, which is
-# a different state from a meter reporting 0 W, and drawing them the same way
-# is the whole class of bug ADR 0013 exists for.
-#
-# **Old data is greyed, not shown.** A retained message from a sensor whose
-# battery died last month arrives the instant the device connects and looks
-# exactly like a live reading. mqtt_age_ms() is the only thing that can tell
-# them apart.
-#
-# Change TOPIC to yours. Nothing else needs touching.
-
 class App
   var TOPIC
   var hist          # 52 samples, one per minute, -1 for "no reading"
@@ -90,16 +69,10 @@ class App
       self.head = (self.head + 1) % 52
     end
 
-    # The scale follows the data rather than being fixed, because a house
-    # that idles at 300 W and peaks at 7 kW has no single useful ceiling.
-    # It only ever rises here; _graph() lets it fall.
     if w > self.peak
       self.peak = w
     end
 
-    # Green while the house is quiet, amber when something big is on, red
-    # for the kettle-and-oven case. Thresholds in watts, so they read the
-    # same on any meter.
     var colour = rgb(0, 210, 120)
     if w >= 3000
       colour = rgb(255, 60, 40)
@@ -120,9 +93,7 @@ class App
   end
 
   def _graph()
-    # Oldest on the left. head is the next slot to write, so it is also the
-    # oldest sample - the read order falls out of that without a second
-    # index to keep in step.
+
     var top = 8
     var h = 7
 

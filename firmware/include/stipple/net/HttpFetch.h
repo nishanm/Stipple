@@ -79,12 +79,21 @@ class ResponseParser {
 public:
     /// Longest body kept, unless the request says otherwise.
     ///
-    /// One kilobyte. A script draws on a panel 52 pixels wide; anything it can
-    /// usefully show is near the front of the document, and the whole point of
-    /// a cap is that the device's memory must not depend on what somebody
-    /// else's server decided to send. A source that genuinely needs a whole
-    /// document asks for a larger cap per request and pays for it knowingly.
-    static constexpr std::size_t kMaxBodyBytes = 1024;
+    /// Was one kilobyte, on the reasoning that anything a 52-pixel panel can
+    /// show is near the front of the document. That is true of a temperature
+    /// and false of a *series*: a contribution heatmap is 365 numbers, the
+    /// API that serves them sends 15 KB, and the newest days are at the end -
+    /// so a small cap kept precisely the wrong part.
+    ///
+    /// 24 KB covers that with room to spare. The cost is bounded and was
+    /// worked out rather than guessed: ScriptFetcher holds one body per feed
+    /// and allows 32 feeds, so the worst case is 768 KB against the 14.3 MB
+    /// this device was measured to have free. Still a cap, which is what §38
+    /// actually asks for - the device's memory must not depend on what
+    /// somebody else's server decided to send.
+    /// A source that genuinely needs a whole document asks for a larger cap
+    /// per request and pays for it knowingly.
+    static constexpr std::size_t kMaxBodyBytes = 24u * 1024u;
 
     /// Longest header block accepted, so a server that never stops sending
     /// headers cannot hold a buffer open for ever.

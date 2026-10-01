@@ -10,9 +10,6 @@ class App
   def draw()
     clear(rgb(0, 0, 0))
 
-    # The point of this script, and the reason it is in the examples: a device
-    # with no battery and a device with a flat one are not the same thing, and
-    # an empty gauge would show them as identical. Say which it is.
     if !battery_known()
       text(4, 5, "no battery", rgb(120, 120, 120))
       return

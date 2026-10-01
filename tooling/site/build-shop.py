@@ -29,6 +29,7 @@ nothing.
 import html
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -59,6 +60,8 @@ def parse(path):
     meta["source"] = text
     meta["lines"] = len(text.splitlines())
     meta["bytes"] = len(text.encode("utf-8"))
+    meta["tags"] = [t.strip().lower()
+                    for t in meta.get("tags", "").split(",") if t.strip()]
     return meta
 
 
@@ -70,16 +73,24 @@ def required(meta, field):
 
 
 def card(meta):
-    name = html.escape(required(meta, "name"))
-    summary = html.escape(required(meta, "summary"))
-    author = html.escape(meta.get("author", "unattributed"))
-    tags = [t.strip() for t in meta.get("tags", "").split(",") if t.strip()]
+    name = required(meta, "name")
+    summary = required(meta, "summary")
+    author = meta.get("author", "unattributed")
+    tags = meta["tags"]
+    anchor = Path(meta["file"]).stem
 
-    chips = "".join(
-        '<li>%s</li>' % html.escape(tag) for tag in tags)
+    chips = "".join('<li>%s</li>' % html.escape(tag) for tag in tags)
+
+    # Everything the filter matches on, on the element it filters.
+    #
+    # The alternative was a JSON blob of metadata beside the markup, which
+    # means the page carries every field twice and the two can disagree. A
+    # data attribute cannot drift from the card it is written on.
+    haystack = " ".join([name, summary, author] + tags).lower()
 
     return """
-      <article class="card" id="{anchor}">
+      <article class="card" id="{anchor}"
+               data-tags="{tagattr}" data-find="{find}">
         <img class="card__preview" src="{anchor}.gif" width="312" height="96"
              loading="lazy" alt="{name} running on a 52 by 16 pixel panel">
         <header class="card__head">
@@ -97,15 +108,36 @@ def card(meta):
         </p>
       </article>
 """.format(
-        anchor=html.escape(Path(meta["file"]).stem),
-        name=name,
-        author=author,
+        anchor=html.escape(anchor),
+        name=html.escape(name),
+        author=html.escape(author),
         lines=meta["lines"],
-        summary=summary,
+        summary=html.escape(summary),
         chips=chips,
+        tagattr=html.escape(" ".join(tags)),
+        find=html.escape(haystack),
         source=html.escape(meta["source"]),
         file=html.escape(meta["file"]),
     )
+
+
+def filters(counts):
+    """The tag chips, most-used first.
+
+    Ordered by how many scripts carry each tag rather than alphabetically,
+    because the useful filters are the ones with something behind them and an
+    alphabetical list buries `game` under `astronomy`, `celebration` and
+    `city`. Ties break alphabetically so the order is stable between builds -
+    Counter.most_common is insertion-ordered for ties, and insertion order
+    here is directory order, which would reshuffle the page every time
+    somebody renamed a file.
+    """
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return "".join(
+        '<button class="chip" type="button" data-tag="{tag}" aria-pressed="false">'
+        '{label}<span class="chip__n">{n}</span></button>'.format(
+            tag=html.escape(tag), label=html.escape(tag), n=n)
+        for tag, n in ordered)
 
 
 PAGE = """<!DOCTYPE html>
@@ -132,8 +164,10 @@ PAGE = """<!DOCTYPE html>
     <span class="bar__name">Stipple</span>
   </a>
   <nav class="bar__nav" aria-label="Main">
-    <a href="../emulator/">Emulator</a>
     <a href="../#install">Install</a>
+    <a href="../shop/" aria-current="page">Library</a>
+    <a href="../scripting/">Scripting</a>
+    <a href="../mqtt/">MQTT</a>
     <a href="../api/">API</a>
     <a href="https://github.com/galadril/Stipple">Source</a>
   </nav>
@@ -141,61 +175,55 @@ PAGE = """<!DOCTYPE html>
 
 <main id="main" class="shop">
 
-  <section class="shop__lede">
-    <h1>Scripts</h1>
-    <p>
-      A script is a Berry class with a <code>draw()</code> method. It runs on
-      the device, inside a sandbox with no filesystem and no loader, under a
-      budget that stops a runaway loop costing anything more than its own
-      frame.
-    </p>
-    <p>
-      Copy one into <strong>Scripts</strong> in your device's web page and
-      save. It joins the carousel immediately. Or try it in the
-      <a href="../emulator/">emulator</a> first &mdash; that runs the same
-      interpreter, so what you see there is what the panel does.
-    </p>
-    <p class="shop__gate">
-      Every script here is compiled and run by the test suite before it is
-      published: ninety frames on a real 52&nbsp;&times;&nbsp;16 framebuffer,
-      buttons pressed, then six hundred more frames checked for leaks. Nothing
-      reaches this page without surviving that.
-    </p>
+  <h1 class="sr-only">Script library</h1>
+
+  <!-- The filter is progressive: without JavaScript every card is visible and
+       the controls are hidden, which is the honest failure for a page whose
+       whole job is listing things. `hidden` comes off in script. -->
+  <section class="sift" id="sift" hidden aria-label="Filter scripts">
+    <div class="sift__row">
+      <label class="sift__search">
+        <span class="sr-only">Search scripts</span>
+        <input type="search" id="find" placeholder="Search name, summary or tag"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <p class="sift__count" id="count" role="status" aria-live="polite"></p>
+      <button class="sift__clear" type="button" id="clear" hidden>Clear</button>
+    </div>
+    <div class="sift__tags" id="tags">__CHIPS__</div>
   </section>
 
-  <section class="shop__grid">
-{cards}
+  <section class="shop__grid" id="grid">
+__CARDS__
   </section>
+
+  <p class="shop__empty" id="empty" hidden>
+    Nothing matches that. <button type="button" class="linkish" id="reset">Show everything</button>
+  </p>
 
   <section class="shop__submit">
     <h2>Add one</h2>
     <p>
-      The button below opens GitHub's editor with the file already named and
-      a working script in it. Change it to yours, commit, and GitHub offers
-      you the pull request. Nothing to clone, nothing to install.
+      The button opens GitHub's editor with the file named and a working
+      script already in it. Change it to yours, commit, and GitHub offers you
+      the pull request &mdash; nothing to clone, nothing to install.
     </p>
     <p class="shop__cta">
       <a class="shop__button" href="https://github.com/galadril/Stipple/new/main?filename=scripts/my-script.be&value=%23%20name%3A%20My%20Script%0A%23%20summary%3A%20One%20sentence%2C%20shown%20in%20the%20listing.%0A%23%20author%3A%20your-github-handle%0A%23%20tags%3A%20clock%2C%20animation%0A%23%20panel%3A%2052x16%0A%0Aclass%20App%0A%20%20def%20draw%28%29%0A%20%20%20%20clear%28rgb%280%2C%200%2C%200%29%29%0A%20%20%20%20text%282%2C%205%2C%20%22hello%22%2C%20rgb%280%2C%20190%2C%20255%29%29%0A%20%20end%0Aend%0A%0Areturn%20App%28%29%0A">Write a script</a>
     </p>
     <p>
-      That is the whole submission. The test suite picks the file up on its
-      own &mdash; it builds its list from this directory &mdash; so your script
-      is compiled, run for ninety frames and checked for leaks by the same
-      pull request that adds it.
-    </p>
-    <p>
-      Two things the tests will hold you to, both learned the hard way. Text
-      that runs past pixel&nbsp;51 is clipped without complaint, so measure it
-      rather than centring by eye. And if your script shows the time or the
-      battery, check <code>time_known()</code> and
-      <code>battery_known()</code> first: a device that has never synchronised
-      its clock does not have a time, and drawing 00:00 invents one.
+      That is the whole submission. The test suite builds its list from this
+      directory, so your script is compiled, run and checked for leaks by the
+      same pull request that adds it &mdash; and this page rebuilds itself
+      once that merges. The
+      <a href="../scripting/">scripting reference</a> covers what it will
+      hold you to.
     </p>
   </section>
 
 </main>
 
-<!-- One dialog, reused. Nineteen scripts inline would be a page carrying
+<!-- One dialog, reused. Thirty scripts inline would be a page carrying
      several thousand lines of Berry whether or not anybody opens one; the
      sources sit in <template> elements, which browsers parse but do not
      render, and are moved in on demand. -->
@@ -211,57 +239,186 @@ PAGE = """<!DOCTYPE html>
 </dialog>
 
 <script>
-(function () {{
+(function () {
+    // --- the reader ------------------------------------------------------
+
     var dialog = document.getElementById('reader');
     // No <dialog> means no lightbox. The card falls back to the GitHub link
     // beside it, which is a worse experience and not a broken one.
-    if (!dialog || typeof dialog.showModal !== 'function') {{ return; }}
+    if (dialog && typeof dialog.showModal === 'function') {
+        var title = document.getElementById('reader-title');
+        var body = document.getElementById('reader-body');
+        var copy = document.getElementById('reader-copy');
 
-    var title = document.getElementById('reader-title');
-    var body = document.getElementById('reader-body');
-    var copy = document.getElementById('reader-copy');
+        var open = function (anchor, name) {
+            var template = document.getElementById('src-' + anchor);
+            if (!template) { return; }
+            body.textContent = '';
+            body.appendChild(template.content.cloneNode(true));
+            title.textContent = name;
+            copy.textContent = 'Copy';
+            dialog.showModal();
+        };
 
-    function open(anchor, name) {{
-        var template = document.getElementById('src-' + anchor);
-        if (!template) {{ return; }}
-        body.textContent = '';
-        body.appendChild(template.content.cloneNode(true));
-        title.textContent = name;
-        copy.textContent = 'Copy';
-        dialog.showModal();
-    }}
+        Array.prototype.forEach.call(document.querySelectorAll('.card__read'), function (button) {
+            button.addEventListener('click', function () {
+                var card = button.closest('.card');
+                var heading = card ? card.querySelector('h3') : null;
+                open(button.getAttribute('data-script'), heading ? heading.textContent : 'Script');
+            });
+        });
 
-    Array.prototype.forEach.call(document.querySelectorAll('.card__read'), function (button) {{
-        button.addEventListener('click', function () {{
-            var card = button.closest('.card');
-            var heading = card ? card.querySelector('h3') : null;
-            open(button.getAttribute('data-script'), heading ? heading.textContent : 'Script');
-        }});
-    }});
+        document.getElementById('reader-close').addEventListener('click', function () {
+            dialog.close();
+        });
 
-    document.getElementById('reader-close').addEventListener('click', function () {{
-        dialog.close();
-    }});
+        // Clicking the backdrop closes it. The dialog element reports those
+        // clicks as landing on itself rather than on any child, which is the
+        // only way to tell the two apart without wrapping the contents in
+        // another box.
+        dialog.addEventListener('click', function (event) {
+            if (event.target === dialog) { dialog.close(); }
+        });
 
-    // Clicking the backdrop closes it. The dialog element reports those
-    // clicks as landing on itself rather than on any child, which is the only
-    // way to tell the two apart without wrapping the contents in another box.
-    dialog.addEventListener('click', function (event) {{
-        if (event.target === dialog) {{ dialog.close(); }}
-    }});
+        copy.addEventListener('click', function () {
+            var code = body.querySelector('code');
+            if (!code || !navigator.clipboard) { return; }
+            navigator.clipboard.writeText(code.textContent).then(function () {
+                copy.textContent = 'Copied';
+            }, function () {
+                // Clipboard access can be refused, and saying so beats a
+                // button that silently did nothing.
+                copy.textContent = 'Press Ctrl+C';
+            });
+        });
+    }
 
-    copy.addEventListener('click', function () {{
-        var code = body.querySelector('code');
-        if (!code || !navigator.clipboard) {{ return; }}
-        navigator.clipboard.writeText(code.textContent).then(function () {{
-            copy.textContent = 'Copied';
-        }}, function () {{
-            // Clipboard access can be refused, and saying so beats a button
-            // that silently did nothing.
-            copy.textContent = 'Press Ctrl+C';
-        }});
-    }});
-}}());
+    // --- the filter ------------------------------------------------------
+    //
+    // Text and tags together, both narrowing. Selecting `audio` and `tool`
+    // means scripts that are both, not either: with thirty scripts the useful
+    // question is "a tool that makes a noise", and an OR would answer it with
+    // everything that does either.
+
+    var sift = document.getElementById('sift');
+    var grid = document.getElementById('grid');
+    if (!sift || !grid) { return; }
+
+    var cards = Array.prototype.slice.call(grid.querySelectorAll('.card'));
+    var chips = Array.prototype.slice.call(document.querySelectorAll('.chip'));
+    var find = document.getElementById('find');
+    var count = document.getElementById('count');
+    var clear = document.getElementById('clear');
+    var empty = document.getElementById('empty');
+    var reset = document.getElementById('reset');
+
+    // The controls only exist for people who can use them.
+    sift.hidden = false;
+
+    var chosen = [];
+
+    var matches = function (card) {
+        var i;
+        for (i = 0; i < chosen.length; i += 1) {
+            if ((' ' + card.getAttribute('data-tags') + ' ').indexOf(' ' + chosen[i] + ' ') < 0) {
+                return false;
+            }
+        }
+        var text = find.value.trim().toLowerCase();
+        if (text === '') { return true; }
+        // Every word has to appear somewhere, so "clock audio" narrows
+        // instead of widening. Splitting on whitespace rather than treating
+        // the box as one phrase is what makes it feel like search.
+        var words = text.split(/\\s+/);
+        var haystack = card.getAttribute('data-find');
+        for (i = 0; i < words.length; i += 1) {
+            if (haystack.indexOf(words[i]) < 0) { return false; }
+        }
+        return true;
+    };
+
+    var apply = function () {
+        var shown = 0;
+        cards.forEach(function (card) {
+            var ok = matches(card);
+            card.hidden = !ok;
+            if (ok) { shown += 1; }
+        });
+
+        var filtering = chosen.length > 0 || find.value.trim() !== '';
+        count.textContent = filtering
+            ? shown + ' of ' + cards.length
+            : cards.length + ' scripts';
+        clear.hidden = !filtering;
+        empty.hidden = shown !== 0;
+
+        // A tag that would leave nothing is worth showing as unavailable
+        // rather than letting somebody click into an empty page.
+        chips.forEach(function (chip) {
+            var tag = chip.getAttribute('data-tag');
+            if (chosen.indexOf(tag) >= 0) {
+                chip.disabled = false;
+                return;
+            }
+            var possible = cards.some(function (card) {
+                return !card.hidden &&
+                    (' ' + card.getAttribute('data-tags') + ' ').indexOf(' ' + tag + ' ') >= 0;
+            });
+            chip.disabled = !possible;
+        });
+
+        // The filter goes in the URL, so a link to "every audio script" is a
+        // thing somebody can send. replaceState rather than pushState: each
+        // keystroke would otherwise be a back-button step.
+        var query = [];
+        if (chosen.length) { query.push('tags=' + encodeURIComponent(chosen.join(','))); }
+        if (find.value.trim()) { query.push('q=' + encodeURIComponent(find.value.trim())); }
+        history.replaceState(null, '', query.length ? '?' + query.join('&') : location.pathname);
+    };
+
+    chips.forEach(function (chip) {
+        chip.addEventListener('click', function () {
+            var tag = chip.getAttribute('data-tag');
+            var at = chosen.indexOf(tag);
+            if (at >= 0) { chosen.splice(at, 1); } else { chosen.push(tag); }
+            chip.setAttribute('aria-pressed', at >= 0 ? 'false' : 'true');
+            apply();
+        });
+    });
+
+    find.addEventListener('input', apply);
+
+    var clearAll = function () {
+        chosen = [];
+        chips.forEach(function (chip) { chip.setAttribute('aria-pressed', 'false'); });
+        find.value = '';
+        apply();
+        find.focus();
+    };
+
+    clear.addEventListener('click', clearAll);
+    if (reset) { reset.addEventListener('click', clearAll); }
+
+    // Escape clears, but only when the search box has the focus - taking the
+    // key globally would break the dialog's own close.
+    find.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') { clearAll(); }
+    });
+
+    // Restore whatever the URL asked for, so a shared link opens filtered.
+    var params = new URLSearchParams(location.search);
+    var wanted = (params.get('tags') || '').split(',').filter(Boolean);
+    wanted.forEach(function (tag) {
+        var chip = chips.filter(function (c) { return c.getAttribute('data-tag') === tag; })[0];
+        if (chip) {
+            chosen.push(tag);
+            chip.setAttribute('aria-pressed', 'true');
+        }
+    });
+    if (params.get('q')) { find.value = params.get('q'); }
+
+    apply();
+}());
 </script>
 
 <footer class="foot">
@@ -289,7 +446,20 @@ def main():
     # to check that each name appeared in test_shop_scripts.cpp by hand, which
     # was a real guard right up until the list stopped being written by hand.
 
-    cards = "".join(card(parse(path)) for path in files)
+    entries = [parse(path) for path in files]
+    cards = "".join(card(meta) for meta in entries)
+
+    counts = Counter()
+    for meta in entries:
+        counts.update(meta["tags"])
+
+    # Substituted rather than formatted. The page carries a script full of
+    # JavaScript object and function braces, and str.format would need every
+    # one of them doubled - a rule that holds right up until somebody adds a
+    # line and forgets, at which point the page breaks somewhere unrelated to
+    # the edit.
+    page = (PAGE.replace("__CARDS__", cards)
+                .replace("__CHIPS__", filters(counts)))
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     # Newlines pinned to LF. Without it Python translates to CRLF on Windows,
@@ -297,8 +467,9 @@ def main():
     # CI regenerates - and the diff check that exists to catch real drift
     # would fail on every line instead.
     with open(OUT, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(PAGE.format(cards=cards))
-    print("build-shop: %d scripts -> %s" % (len(files), OUT.relative_to(ROOT)))
+        handle.write(page)
+    print("build-shop: %d scripts, %d tags -> %s"
+          % (len(files), len(counts), OUT.relative_to(ROOT)))
     return 0
 
 

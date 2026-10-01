@@ -45,6 +45,16 @@ SCALE = 6
 # uses, so a preview and the hero canvas show the same thing.
 UNLIT = (12, 18, 22)
 
+# The dark line between LEDs, a shade below an unlit one so the two read as
+# different things.
+GAP = bytes((4, 6, 8))
+GAP_PX = 1
+
+
+def lit(pixel):
+    """An LED the firmware left black is off, not absent."""
+    return bytes(UNLIT) if pixel == b"\x00\x00\x00" else pixel
+
 
 def read_frames(path):
     data = path.read_bytes()
@@ -113,11 +123,14 @@ def quantise(frames):
     seen = {}
     for frame in frames:
         for i in range(0, len(frame), 3):
-            seen[frame[i:i + 3]] = True
+            seen[lit(frame[i:i + 3])] = True
 
-    exact = len(seen) <= 256
+    # One slot is kept back for the gap between LEDs.
+    exact = len(seen) <= 255
     if exact:
         palette = sorted(seen.keys())
+        gap = len(palette)
+        palette.append(GAP)
         index = {c: i for i, c in enumerate(palette)}
         lookup = lambda c: index[c]
     else:
@@ -129,6 +142,9 @@ def quantise(frames):
             ((i >> 2) & 0x7) * 255 // 7,
             (i & 0x3) * 255 // 3,
         )) for i in range(256)]
+        # Index 0 is black, which is as close to the gap colour as the
+        # fallback palette gets.
+        gap = 0
         lookup = lambda c: (
             ((c[0] * 7 // 255) << 5) | ((c[1] * 7 // 255) << 2) | (c[2] * 3 // 255))
 
@@ -139,21 +155,30 @@ def quantise(frames):
             row = bytearray()
             for x in range(WIDTH):
                 off = (y * WIDTH + x) * 3
-                row.append(lookup(frame[off:off + 3]))
+                row.append(lookup(lit(frame[off:off + 3])))
             rows.append(bytes(row))
         indexed.append(rows)
 
     while len(palette) < 2:
         palette.append(b"\x00\x00\x00")
-    return palette, indexed, exact
+    return palette, indexed, exact, gap
 
 
-def scale_rows(rows):
+def scale_rows(rows, gap):
+    """Each LED becomes a square with a dark line to its right and below.
+
+    Without the line neighbouring pixels fuse into one block and the panel
+    reads as a low-resolution picture rather than a grid of separate LEDs.
+    """
+    solid = SCALE - GAP_PX
     out = []
     for row in rows:
-        wide = bytes(b for value in row for _ in range(SCALE) for b in (value,))
-        for _ in range(SCALE):
+        wide = bytes(b for value in row
+                     for b in ([value] * solid + [gap] * GAP_PX))
+        for _ in range(solid):
             out.append(wide)
+        for _ in range(GAP_PX):
+            out.append(bytes([gap]) * len(wide))
     return out
 
 
@@ -247,7 +272,7 @@ def sub_blocks(data):
     return bytes(out)
 
 
-def build_gif(palette, frames):
+def build_gif(palette, frames, gap):
     width = WIDTH * SCALE
     height = HEIGHT * SCALE
 
@@ -271,7 +296,7 @@ def build_gif(palette, frames):
 
     min_code_size = max(2, bits)
     for rows in frames:
-        wide = scale_rows(rows)
+        wide = scale_rows(rows, gap)
         pixels = b"".join(wide)
 
         out += b"\x21\xF9\x04"
@@ -292,8 +317,9 @@ def build_gif(palette, frames):
 
 def main():
     if len(sys.argv) < 2:
-        raise SystemExit("usage: build-previews.py <frames-dir>")
+        raise SystemExit("usage: build-previews.py <frames-dir> [<output-dir>]")
     frames_dir = Path(sys.argv[1])
+    out_dir = Path(sys.argv[2]) if len(sys.argv) > 2 else OUT
     if not frames_dir.is_dir():
         raise SystemExit("build-previews: no such directory: %s" % frames_dir)
 
@@ -303,14 +329,14 @@ def main():
             "build-previews: no .rgb files in %s - run the ShopScripts frame "
             "dump first" % frames_dir)
 
-    OUT.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     for path in sources:
         frames = read_frames(path)
         frames, rotated = open_on_content(frames)
-        palette, indexed, exact = quantise(frames)
-        gif = build_gif(palette, indexed)
+        palette, indexed, exact, gap = quantise(frames)
+        gif = build_gif(palette, indexed, gap)
 
-        target = OUT / (path.stem + ".gif")
+        target = out_dir / (path.stem + ".gif")
         target.write_bytes(gif)
         print("build-previews: %-16s %3d frames, %3d colours%s, %6d bytes%s"
               % (target.name, len(frames), len(palette),

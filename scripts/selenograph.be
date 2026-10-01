@@ -1,16 +1,10 @@
 # name: Selenograph
 # summary: Tonight's real moon phase, worked out from the date alone - then the story on a click.
-# author: Galadril
+# author: Stipple
 # tags: time, space, astronomy, ambient
 # panel: 52x16
 
 import math
-
-# The moon phase is derived purely from the calendar date via a Julian day
-# number and the 29.53-day synodic month, so it needs no network and no
-# almanac - just the clock the device already keeps. The disc is drawn from a
-# fixed cosine table for the terminator, and a click scrolls the full caption
-# (phase name, illumination and the days to the next full/new moon).
 
 class Selenograph
   var COS, HW, NAME

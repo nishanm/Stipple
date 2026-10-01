@@ -1,0 +1,297 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
+
+/* The reference pages, on top of stipple.css. Same rule as the shop sheet:
+   the bar, the colours and the type scale come from the main sheet, because a
+   second page that invents its own is a second page that drifts.
+
+   These pages are reference material rather than a pitch, so they are built
+   for the two things people actually do with reference material: find the one
+   section they came for, and read a table of signatures without losing the
+   row. Hence a contents list that stays put, and tables set as a data sheet
+   rather than as decorated prose. */
+
+/* One sheet on the grid, not two columns floating over it.
+   
+   Both columns used to sit straight on the body's dot pattern, which left the
+   text with nothing to rest on and made the contents list look like it had
+   been dropped there. The page's dots are the surround now; the document is a
+   surface.
+
+   The left column's fill is painted by the container rather than by .toc
+   itself, because .toc is sticky: a sticky item stretched to the row height
+   has nowhere left to travel, so it has to size to its own content - and then
+   its background would stop halfway down the page. A gradient on the parent
+   fills the whole column regardless of how short the list is.
+
+   --toc feeds both the grid track and that gradient. They must not drift, and
+   with the number written twice they would. */
+.doc {
+  --toc: 15rem;
+
+  display: grid;
+  grid-template-columns: var(--toc) minmax(0, 1fr);
+  gap: 0;
+  max-width: 72rem;
+  margin: clamp(1.5rem, 4vw, 3rem) auto clamp(3rem, 8vw, 6rem);
+  align-items: start;
+
+  border: 1px solid var(--rule);
+  background:
+    linear-gradient(to right,
+      var(--panel) 0,
+      var(--panel) var(--toc),
+      var(--rule) var(--toc),
+      var(--rule) calc(var(--toc) + 1px),
+      var(--void) calc(var(--toc) + 1px));
+}
+
+/* The page's own margin, so the sheet is not flush against the viewport on a
+   laptop. var(--pad) already scales with the window. */
+@media (min-width: 76rem) {
+  .doc { margin-left: auto; margin-right: auto; }
+}
+
+/* --- contents ------------------------------------------------------------- */
+
+.toc {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  font-size: 0.875rem;
+  padding: clamp(1.5rem, 3vw, 2rem) 1.25rem;
+}
+
+.toc__head {
+  margin: 0 0 0.75rem;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+/* An ordered element for the structure it carries, not for numbering: these
+   are places in a document, not steps in a process, so the markers come off. */
+.toc ol { list-style: none; margin: 0; padding: 0; }
+.toc li { margin: 0 0 0.4rem; }
+.toc a { color: var(--dim); text-decoration: none; display: block; line-height: 1.35; }
+.toc a:hover, .toc a:focus-visible { color: var(--cyan); }
+.toc__3 { padding-left: 0.9rem; font-size: 0.8125rem; }
+
+/* --- prose ---------------------------------------------------------------- */
+
+/* max-width as well as min-width, and the second one is what actually works.
+   
+   On a phone the page scrolled sideways: the viewport was 549px and .prose
+   measured 778, so the header ran off the screen and every paragraph was
+   clipped mid-sentence. The cause is the signature tables - their columns are
+   `white-space: nowrap`, which makes their min-content width about 736px, and
+   that propagated up through the grid item even though `minmax(0, 1fr)` and
+   `min-width: 0` are both set, which in principle should already allow it to
+   shrink.
+
+   `max-width: 100%` resolves against the grid area and clamps it regardless.
+   Measured rather than reasoned: with it, document scrollWidth equals the
+   viewport at 549px; without it, 778. The tables still scroll inside their
+   own wrapper, which is where the sideways movement belongs. */
+.prose,
+.toc {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.prose {
+  padding: clamp(1.75rem, 4vw, 3rem) clamp(1.25rem, 3.5vw, 3rem);
+}
+
+.prose h1 {
+  font-size: clamp(2rem, 6vw, 3rem);
+  letter-spacing: -0.02em;
+  margin: 0 0 0.5em;
+}
+
+.prose__lede {
+  color: var(--dim);
+  font-size: 1.0625rem;
+  max-width: var(--measure);
+  margin: 0 0 3rem;
+}
+
+/* Section heads light the first inch of the rule above them.
+   
+   This started as a single three-pixel square sitting on the rule - the
+   panel's own unit, in the accent. On screen it read as a speck of dirt on
+   the page: too small to be a mark, too detached from the heading to be part
+   of one. A lit segment of the rule itself is unambiguous, because it is
+   clearly the rule doing something rather than a stray pixel near it. */
+.prose h2 {
+  font-size: 1.5rem;
+  letter-spacing: -0.015em;
+  margin: 3.5rem 0 1rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--rule);
+  position: relative;
+}
+
+.prose h2::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 2.5rem;
+  height: 1px;
+  background: var(--cyan);
+}
+
+.prose h3 {
+  font-size: 1.125rem;
+  margin: 2.5rem 0 0.75rem;
+  color: var(--ink);
+}
+
+.prose h4 {
+  font-size: 0.9375rem;
+  margin: 1.75rem 0 0.5rem;
+  color: var(--dim);
+  font-weight: 600;
+}
+
+.prose p, .prose ul, .prose blockquote {
+  max-width: var(--measure);
+  line-height: 1.65;
+}
+
+.prose p { margin: 0 0 1.1em; }
+.prose ul { margin: 0 0 1.3em; padding-left: 1.1rem; }
+.prose li { margin: 0 0 0.45em; }
+.prose a { color: var(--cyan); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+/* The chip is painted, not padded.
+   
+   Padding puts real layout space between the code and whatever follows it,
+   and on a reference page most code spans are followed immediately by a comma
+   or a full stop. The result reads as a stray space - "kitchen-clock ." and
+   "{baseTopic}/{deviceId}/... , where" - which on a page about exact strings
+   is worse than no chip at all.
+
+   A box-shadow spread paints outside the border box without occupying any, so
+   punctuation sits where the text puts it and the tint still marks the span. */
+.prose code {
+  font-family: var(--mono, ui-monospace, "Cascadia Code", Menlo, monospace);
+  font-size: 0.9em;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 0 0 0.18em rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  padding: 0;
+}
+
+.prose pre {
+  margin: 0 0 1.5em;
+  padding: 1rem 1.15rem;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--rule);
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.prose pre code {
+  background: none;
+  box-shadow: none;
+  padding: 0;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+/* Berry is what people came to read, so its blocks are the ones marked as
+   runnable rather than every fenced block on the page. */
+.prose pre code.lang-berry { color: #d6e2ee; }
+.prose pre:has(code.lang-berry) { border-left-color: var(--green); }
+
+.prose blockquote {
+  margin: 0 0 1.3em;
+  padding-left: 1rem;
+  border-left: 2px solid var(--amber, #ffb000);
+  color: var(--dim);
+}
+
+.prose hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5rem 0; }
+
+/* --- tables --------------------------------------------------------------- */
+
+/* Wider than the measure on purpose: a signature table wraps badly and a
+   wrapped signature is one somebody mistypes. It scrolls on a narrow screen
+   rather than reflowing into something unreadable. */
+.scroll { overflow-x: auto; margin: 0 0 1.75em; }
+
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9375rem;
+}
+
+.prose th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 0.5rem 1rem 0.5rem 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+
+.prose td {
+  padding: 0.55rem 1rem 0.55rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: var(--dim);
+  vertical-align: top;
+}
+
+/* The first column of these tables is always the thing being named - a
+   function, a topic, a key - so it is set as the identifier it is. */
+.prose td:first-child { color: var(--ink); white-space: nowrap; }
+.prose td:first-child code { background: none; box-shadow: none; padding: 0; }
+
+.prose__source {
+  margin-top: 4rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--rule);
+  font-size: 0.875rem;
+  color: var(--dim);
+}
+
+/* --- narrow --------------------------------------------------------------- */
+
+@media (max-width: 56rem) {
+  /* One column, so the two-tone gradient would paint a stripe across the top
+     of the text. Flat fill instead. */
+  .doc {
+    grid-template-columns: minmax(0, 1fr);
+    background: var(--void);
+    margin: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  /* Above the text rather than beside it, and collapsed, because a contents
+     list that fills a phone screen is a page somebody has to scroll past
+     before reaching the first sentence. */
+  .toc {
+    position: static;
+    max-height: none;
+    background: var(--panel);
+    border-bottom: 1px solid var(--rule);
+    padding: 1.25rem;
+  }
+
+  .toc ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+  }
+
+  .toc__3 { display: none; }
+}
+
+/* The page you are on, named in the bar. Quiet - it reports where you are,
+   it is not a call to go there. */
+.bar__nav a[aria-current="page"] { color: var(--ink); }

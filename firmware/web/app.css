@@ -82,6 +82,11 @@ body {
 .pill.online { color: var(--ok); border-color: var(--ok); }
 .pill.offline { color: var(--danger); border-color: var(--danger); }
 
+/* The controller link wears the same pill, so the topbar stays one row of
+   one thing. It is the only clickable one, hence the only one that reacts. */
+a.pill { text-decoration: none; }
+a.pill:hover { color: var(--text); border-color: var(--accent); }
+
 .tabs {
     display: flex;
     gap: 2px;
@@ -601,6 +606,41 @@ input[type="color"] {
         linear-gradient(-45deg, transparent 75%, #1b1b1b 75%);
     background-size: 8px 8px;
     background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+}
+
+/* A script's own settings, above its source.
+ *
+ * Boxed and labelled so it does not read as part of the code below it: these
+ * are two different things to save, and conflating them is how somebody
+ * edits a channel ID and wonders why the script did not recompile.
+ */
+.settings {
+    margin: 0 0 0.9rem;
+    padding: 0.85rem 1rem 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+}
+
+.settings__title {
+    margin: 0 0 0.7rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.settings .field { margin-bottom: 0.7rem; }
+.settings .field:last-of-type { margin-bottom: 0.2rem; }
+
+.settings__note { margin: 0.4rem 0 0; }
+
+/* A value the device refused. Marked on the field, because by the time
+   somebody reads a message at the bottom of the page they have forgotten
+   which box it was about. */
+.settings input.bad {
+    border-color: var(--danger);
 }
 
 /* --- the script editor --------------------------------------------------- */

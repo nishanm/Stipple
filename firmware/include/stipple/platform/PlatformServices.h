@@ -229,6 +229,23 @@ public:
 
     /// Put the previous application back. False when there is not one.
     virtual bool rollback(std::string& problem) = 0;
+
+    /// Whether what is on disk is no longer what is running.
+    ///
+    /// The file alone cannot answer this. An installed override looks
+    /// identical whether it is waiting for a restart or already loaded -
+    /// after the restart it is both installed *and* running, and
+    /// `installedBytes()` says the same thing in either case. That is why
+    /// the web page could report "Running an installed update (1306 KB).
+    /// Version 0.2.3." while 1306 KB described the file just uploaded and
+    /// 0.2.3 described the process still serving the page.
+    ///
+    /// What can be answered is narrower and exact: an install during this
+    /// process's lifetime necessarily happened *after* this process loaded,
+    /// so nothing it wrote is in effect. A restart clears the flag by
+    /// destroying the object that holds it, which is the only correct way to
+    /// clear it.
+    virtual bool restartPending() const = 0;
 };
 
 struct BatteryStatus {

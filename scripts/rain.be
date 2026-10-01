@@ -1,14 +1,10 @@
 # name: Rain
 # summary: Slanted rain falling past, with the odd distant flash of lightning.
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation, weather, relaxing
 # panel: 52x16
 
 import math
-
-# Rain that is calm to leave running, with lightning rare enough to be a
-# surprise rather than a strobe. The drops fall at three speeds so the sheet
-# reads as depth instead of a single flat curtain.
 
 class App
   var dx, dy, dspeed   # drop position and fall speed, parallel arrays

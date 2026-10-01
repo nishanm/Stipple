@@ -36,9 +36,6 @@ class App
     # "09.11" is five characters again: 1 to 31, under the time.
     text(1, 9, string.format("%02d.%02d", day(), month()), rgb(95, 95, 95))
 
-    # The minute as a bar, in the 19 pixels left at the bottom right. It is
-    # the one thing on a clock slow enough to watch, and a bar reads at a
-    # glance where a pair of digits does not.
     rect(33, 10, 19, 5, rgb(28, 28, 28))
     var filled = (second() * 17) / 60
     if filled > 0

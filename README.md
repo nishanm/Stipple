@@ -1,18 +1,23 @@
-# Stipple
+<p align="center">
+  <img src="site/banner.svg" alt="Stipple, spelled out in lit pixels on a 52 by 16 LED panel" width="624">
+</p>
 
-**Open pixel firmware for the Ulanzi TC002.**
+<p align="center"><strong>Open pixel firmware for the Ulanzi TC002.</strong></p>
 
 Stipple replaces the stock application on the Ulanzi TC002 with a renderer it
-owns end to end: a 52×16 framebuffer, declarative custom apps, notifications,
-an HTTP and MQTT API, sound, and a browser emulator. Local-first — no cloud,
-no account, no vendor app.
+owns end to end: a 52×16 framebuffer, declarative custom apps, Berry scripts,
+notifications, an HTTP and MQTT API, sound, and a browser emulator.
+Local-first — no cloud, no account, no vendor app.
 
-**[galadril.github.io/Stipple](https://galadril.github.io/Stipple/)** — try it
-in your browser, no hardware needed. Every panel on that page is real output
-from the test suite, and the [API reference](https://galadril.github.io/Stipple/api/)
-is generated from a specification CI checks against the router.
+**[galadril.github.io/Stipple](https://galadril.github.io/Stipple/)** — the
+site, with animated previews of the built-in apps, a
+[library of scripts](https://galadril.github.io/Stipple/shop/) and the
+[API reference](https://galadril.github.io/Stipple/api/), which is generated
+from a specification CI checks against the router. Every preview is real
+output from the test suite. To run the emulator yourself, see
+[Try it without a device](#try-it-without-a-device).
 
-> **Status: 0.2.3, pre-release. This build runs on real hardware.**
+> **Status: pre-release. It runs on real hardware.**
 >
 > Stipple installs into the device's `res` partition beside a small shim that
 > chooses what to run. A Stipple that will not load falls back to the stock
@@ -20,18 +25,18 @@ is generated from a specification CI checks against the router.
 > recovery is deleting one file. After the first install, updates are a file
 > upload in the web UI — no flashing, no USB stick.
 >
-> 0.2.3 was run on a TC002 before release: the panel, the scripts, the
-> speaker, the microphone and the carousel, with the capability probes
-> checked against the device rather than inferred from the host build.
+> The panel, the scripts, the speaker, the microphone and the carousel have
+> been run on a TC002, with the capability probes checked against the device
+> rather than inferred from the host build.
 >
 > Two things still have not been done. The **firmware-update endpoint has not
 > been exercised end to end** — it validates, installs atomically and keeps
 > the previous version for rollback, and no device has yet been updated
 > through it. And **`https` does not work on a TC002**: the TLS support is
-> there and verifies properly, but the device's own OpenSSL turns out to have
-> every TLS protocol version compiled out, so scripts get a clear
-> `openssl has no tls` instead of a connection. Plain `http` on your own
-> network is fine. See the changelog.
+> there and verifies properly, but the device's own OpenSSL has every TLS
+> protocol version compiled out, so scripts get a clear `openssl has no tls`
+> instead of a connection. Plain `http` on your own network is fine. See the
+> changelog.
 >
 > See [docs/install.md](docs/install.md).
 
@@ -62,7 +67,13 @@ icon, bitmap, sprite, progress, graph, animation, group — with a carousel you
 can reorder, pin and configure per app. Built-in clock, stopwatch, battery and
 microphone visualiser.
 
-**Controls.** One meaning per control: turn the knob to move, press to act,
+**Scripts.** Berry scripts that draw, play sound, hear the room, talk MQTT and
+fetch over HTTP, each compiled and run by the test suite before it is
+published. The [script library](https://galadril.github.io/Stipple/shop/) is
+the `scripts/` directory; a script can also take the controls for games. See
+[docs/scripting.md](docs/scripting.md).
+
+**Controls.**
 −/+ to adjust, middle to go back, hold the knob for settings. One control
 never means two things.
 
@@ -83,7 +94,7 @@ default, with a physical way back: hold − and + for five seconds.
 **A browser emulator.** The real renderer compiled to WebAssembly, serving the
 real configuration page through the real router. Not a mock.
 
-905 tests, including golden-image comparison of rendered frames.
+Over a thousand tests, including golden-image comparison of rendered frames.
 
 ## Try it without a device
 
@@ -127,11 +138,7 @@ Stated plainly, because a status section that only lists wins is not one.
 - **Updating through the web UI is implemented but unproven.** The endpoint
   validates, installs atomically and keeps the previous version for rollback,
   and it has not yet been exercised end to end on hardware.
-- **This build has not been on a device.** The code that ran carried the
-  project's previous name; the rename is mechanical and the tests pass, but
-  "the tests pass" and "it booted" are different claims and only one of them
-  has been made about this commit.
-- **No update checking.** Nothing polls for a new release; you upload the file.
+- **No update checking.**
   The device also has no working DNS — see the findings document — so anything
   that fetches by hostname needs that solved first.
 - **DHCP lease renewal is untested end to end.** The timing is tested on a
@@ -172,8 +179,10 @@ harness and MQTT client are all in-tree.
 
 ```
 firmware/      core renderer, platform adapters, host tests   (C++17)
+scripts/       the Berry script library, one file per script
 simulator/     browser emulator (Emscripten)
-tooling/       device probe, cross-toolchains, image tooling  (Python)
+site/          the website, generated from the repository
+tooling/       device probe, cross-toolchains, image tooling, site builders  (Python)
 docs/          guides, reference, hardware research
 ```
 

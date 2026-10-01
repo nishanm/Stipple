@@ -129,11 +129,22 @@ end
 |---|---|
 | `audio_known()` | Whether this device has a speaker at all. |
 | `tone(hz, ms)` | Queues a note. Returns whether it started. |
-| `sound(name)` | Queues a built-in sound. `beep`, `chime`, `alert`, `tick`, `tock`. Returns whether the name is one. |
+| `sound(name)` | Queues a built-in sound. Returns whether the name is one. |
 | `volume()` | 0-255, the level somebody set. Read only. |
 
 Both `tone` and `sound` return immediately - they queue, they do not wait, and
 a script that bleeps does not cost a frame.
+
+The built-in sounds are `beep`, `chime`, `alert`, `tick`, `tock`, `success`,
+`failure`, `notify`, `alarm` and `startup`. They are short sequences of notes
+rather than single beeps, and the shapes mean something: rising for good,
+falling for bad, repeated for urgent. So `success` and `failure` are
+distinguishable without looking at the panel, which is the entire point of a
+device making a noise.
+
+`GET /api/v1/sound` is the authoritative list, because the firmware is the
+only thing that knows what it can play. An unknown name returns false rather
+than playing a beep instead - if `sound()` says false, nothing happened.
 
 Three limits, all deliberate. **Four sounds per call**, because the panel would
 keep rendering happily while the speaker worked through a minute of backlog,
@@ -206,6 +217,48 @@ what was wanted.
 Reading is unrestricted and writing is not, which is deliberate: the broker
 belongs to whoever installed the script, and showing what is already on it is
 the entire point.
+
+### Settings somebody can fill in
+
+A script that needs a channel ID, a username or a city should not make people
+edit Berry to set it. Declare the field in a comment at the top and the
+device's web page renders it:
+
+```berry
+# @config chan text "Channel ID" default="UCpGLAL..." maxlen=32 help="The UC... part of the URL, not the @handle"
+# @config views boolean "Show total views instead" default=false
+
+def draw()
+  var id = store.get("chan", "UCpGLAL...")
+end
+```
+
+**You read it with the `store.get` you were already using.** The declaration
+names the same key, so there is no second API to learn and no second place
+for the value to live - and a script running on a firmware too old to know
+about `@config` still works, because `store.get` falls back on its own.
+
+| Part | |
+|---|---|
+| `key` | Lowercase letters, digits, `-` and `_`. This is the store key. |
+| type | `text`, `number` or `boolean`. |
+| label | Quoted. Shown beside the field. |
+| `default=` | What the field shows when nothing is set. |
+| `help=` | A line under the field. Worth writing. |
+| `maxlen=` | Text only. |
+| `min=` / `max=` | Numbers only. Values outside are refused. |
+
+Eight settings per script. The header ends at the first line that is not a
+comment or blank, so a `@config` written halfway down the file is a comment
+about the code there.
+
+**A malformed declaration costs that field and nothing else.** A typo in a
+settings line should not stop the script compiling, so an unknown type or a
+missing label is skipped and everything else still works.
+
+Values are stored with the type you declared, which matters more than it
+looks: `store.get("views", false)` has to come back as a boolean, because a
+string `"false"` is truthy in Berry and the check would silently always pass.
 
 ### The network
 
@@ -323,12 +376,60 @@ def on_button(name)
 end
 ```
 
-If your script has an `on_button`, it receives the action press instead of the
-carousel pausing. If it has none, the press does what it always does — a script
-that swallowed the only button would be an app you could not pause.
+If your script has an `on_button`, it receives the action press — `name` is
+`"select"` — instead of the carousel pausing. If it has none, the press does
+what it always does: a script that swallowed the only button would be an app
+you could not pause.
 
-The knob is never offered. It is how somebody moves between apps, and a script
-that took it would be a script you could not leave.
+That is one control, which is enough for Flappy and not enough for Tetris.
+
+### Taking the controls
+
+```berry
+# @input exclusive
+```
+
+Declare that in the header and your script gets everything except the way out:
+
+| Control | `name` |
+|---|---|
+| − button | `minus` |
+| + button | `plus` |
+| knob press | `select` |
+| knob, counter-clockwise | `left` |
+| knob, clockwise | `right` |
+
+**The middle button is never yours, and neither is a held knob.** The middle
+button always goes back, and holding the knob always reaches settings, in
+every app and every mode. That is what makes it safe to hand over the rest —
+there is no script you can write that a person cannot walk away from. Pressing
+middle leaves your app and returns to the clock.
+
+Holding − or + still changes brightness, for the same reason: somebody
+squinting at a panel they cannot read should not have to quit a game first.
+
+One detent is one `left` or `right`, however fast the knob is turned. The
+acceleration that makes brightness pleasant would make a paddle unplayable.
+
+Two things worth knowing:
+
+- **It is opt-in because it has to be.** Without the directive, nothing
+  changes — every script written before this keeps the single press it was
+  written against.
+- **Declare it and forget `on_button` and nothing breaks.** The presses fall
+  through to their ordinary jobs rather than vanishing into an app with five
+  dead controls.
+
+A press from a phone, a broker or a thumb are indistinguishable to your
+script, because they all arrive through the same mapper. `POST /api/v1/input`
+and the MQTT `cmd/input` topic take `minus`, `plus`, `left` and `right` under
+those same names, and the knob press as `press` — the one place the two
+vocabularies differ, because the API names switches and your script is told
+what the press *meant*.
+
+The device serves a ready-made controller at `/gamepad.html`. Open it on a
+phone on the same network and you have a working gamepad, with the arrow keys
+and space bar wired up too if there is a keyboard to hand.
 
 ### Modules
 
@@ -372,13 +473,20 @@ broken script shows `SCRIPT ERROR` rather than going black — a black panel is
 indistinguishable from a script that drew nothing, from a crashed device, and
 from a dead row of LEDs.
 
-## Compatibility with AWTRIX NG
+## Credit and compatibility
 
-The builtin names match what AWTRIX NG documents, so a script written against
-it has a good chance of running here unchanged. That is a reimplementation from
-the documented interface. No AWTRIX source was read or used, and none will be:
-the project studies other products as a reference for behaviour and never as a
-source of code.
+**The scripting interface is AWTRIX NG's design.** The shape of a script, the
+builtin names, `store.get` / `store.set` and the `# @config` header come from
+[the AWTRIX NG scripting guide](https://blueforcer.github.io/awtrix-ng/guides/scripting/),
+and Blueforcer is owed the credit for them. None of it is Berry's — Berry is
+just the language underneath. Matching it was deliberate, because a script
+already written against it running here unchanged is worth more than an
+interface of our own.
+
+That is a reimplementation from the documented interface. No AWTRIX source was
+read or used, and none will be: the project studies other products as a
+reference for behaviour and never as a source of code. Stipple is not
+affiliated with or endorsed by AWTRIX or AWTRIX NG.
 
 Scripts written for a TC001 will need their layout redone regardless. That
 panel is 32 × 8 — a quarter of the area — and a layout squeezed into it usually

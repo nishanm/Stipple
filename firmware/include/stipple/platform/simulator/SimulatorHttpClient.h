@@ -46,6 +46,20 @@ public:
     /// survive.
     void setDefaultFailure(std::string failure) { defaultFailure_ = std::move(failure); }
 
+    /// Answer any URL containing `fragment`, when no exact route matches.
+    ///
+    /// For harnesses that do not know the URL in advance but do know the
+    /// API: the shop previews cannot guess what a card will fetch, but
+    /// "anything with socialcounts in it wants a subscriber count" is a rule
+    /// they can state up front. Checked in the order registered.
+    void answerMatching(std::string fragment, int status, std::string body) {
+        Match match;
+        match.fragment = std::move(fragment);
+        match.status = status;
+        match.body = std::move(body);
+        matches_.push_back(std::move(match));
+    }
+
     /// Answer every unconfigured URL with this instead of refusing.
     ///
     /// For the shop previews, where the URL a script asks for is not known
@@ -85,7 +99,14 @@ public:
 private:
     const Route* findRoute(std::string_view url) const noexcept;
 
+    struct Match {
+        std::string fragment;
+        int status = 200;
+        std::string body;
+    };
+
     std::vector<Route> routes_;
+    std::vector<Match> matches_;
     std::string defaultFailure_ = "cannot reach host";
     int defaultStatus_ = 0;
     std::string defaultBody_;

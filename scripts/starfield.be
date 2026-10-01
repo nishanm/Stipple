@@ -26,9 +26,7 @@ class App
     clear(rgb(0, 0, 0))
 
     for i : 0 .. size(self.xs) - 1
-      # Nearer stars move faster and shine brighter. That pairing is the only
-      # thing doing the work here; either one alone reads as a flat sheet of
-      # moving dots.
+
       var speed = self.speeds[i]
       var x = self.xs[i] - speed
       if x < 0

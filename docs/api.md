@@ -100,6 +100,7 @@ get back in.
 | `GET /display/frame` | The frame currently on the panel |
 | `POST /input` | Inject a button press |
 | `POST /glucose/alarm/test` | Play a glucose alarm melody now: `{"melody":"<rtttl>"}` or `{"alarm":"urgentLow"}`; `409` while a real alarm sounds |
+| `GET POST /sound` | What it can play, and play one |
 | `GET POST /apps` | List, add |
 | `GET PUT PATCH DELETE /apps/{id}` | One app |
 | `POST /apps/{id}/activate` | Show it now |
@@ -114,6 +115,51 @@ get back in.
 | `GET POST DELETE /system/firmware` | Update, and roll back |
 | `POST /system/reset` | Configuration back to defaults |
 | `POST /system/reboot` | Restart |
+
+### Sounds are asked for, not assumed
+
+`GET /api/v1/sound` lists what this device can play, with how long each one
+lasts:
+
+```json
+{"sounds": [{"name": "chime", "durationMillis": 280}], "silentName": "none"}
+```
+
+Ask rather than hard-code. The firmware is the only thing that knows its own
+catalogue, and the web UI's own dropdown was for a while offering three of the
+five sounds that existed, which is what writing a list down twice does.
+
+`POST` takes one of three shapes:
+
+```json
+{"sound": "chime"}
+{"frequencyHz": 880, "durationMillis": 200}
+{"stop": true}
+```
+
+A name the device does not have is `422`, not a substituted beep - if you
+asked for something specific and got a `204`, that is what played. An inline
+tone is bounded to 50-8000 Hz and five seconds, which is what a script gets
+too; the network has no business reaching further into the speaker than the
+device's own code does.
+
+On a device with no speaker both verbs answer `404`. That is absence, not a
+malformed request - `capabilities.audio` in `GET /device` says the same thing
+before you ask.
+
+### Updating is two steps, not one
+
+`POST /system/firmware` writes the new library and stops. It does not reload
+anything, and the device goes on running the version it was already running
+until it restarts.
+
+That matters because the obvious fields do not say so. `version` is the
+version of the *process answering the request*, never the file just uploaded,
+and `installedBytes` reports the same number whether the override is waiting
+for a restart or already loaded — after a restart it is both. Read
+`restartPending` instead: it is true when an install or rollback has happened
+since the process started, which is exactly the case where what is on disk is
+not what is running. It lives in memory, so a restart clears it.
 
 Anything under `/api/` that is not `/api/v1/` answers `404` saying so
 explicitly. There is no compatibility layer for other projects' APIs and none

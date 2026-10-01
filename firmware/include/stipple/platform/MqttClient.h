@@ -96,6 +96,20 @@ public:
     /// Pump the transport. Called from the application loop, so nothing arrives
     /// on a thread the rest of the firmware does not know about.
     virtual void poll(std::uint64_t nowMillis) = 0;
+
+    /// Whether this adapter can honour `MqttConnectOptions::tls`.
+    ///
+    /// Asked so a UI can say so before somebody turns it on, rather than
+    /// after. An adapter without TLS must refuse the connection rather than
+    /// downgrade - that part was already right - but refusing is
+    /// indistinguishable from an unreachable broker to the person watching,
+    /// and "it just stopped working when I ticked the box" is not a
+    /// diagnosis. ADR 0013: a capability that is absent has to be visible as
+    /// absent.
+    ///
+    /// Pure rather than defaulted to false, so a new adapter has to answer
+    /// for itself instead of inheriting a claim that quietly goes stale.
+    virtual bool supportsTls() const = 0;
 };
 
 }  // namespace platform

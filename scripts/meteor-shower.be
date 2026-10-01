@@ -1,15 +1,10 @@
 # name: Meteor Shower
 # summary: Bright meteors streak across with glowing tails that fade behind them.
-# author: Galadril
+# author: Stipple
 # tags: animation, space, ambient
 # panel: 52x16
 
 import math
-
-# Several meteors crossing at once, each with a fading trail. The trick that
-# sells it is the tail: instead of clearing the panel each frame we dim what
-# is already there, so every meteor smears a glow behind it that decays over
-# the next handful of frames.
 
 class App
   var buf              # persistent brightness field, one entry per pixel

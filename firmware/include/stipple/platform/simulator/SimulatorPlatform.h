@@ -261,6 +261,15 @@ public:
     bool subscribe(std::string_view topicFilter, int qos) override;
     void poll(std::uint64_t nowMillis) override;
 
+    /// False, matching the device.
+    ///
+    /// The broker here is a table in memory, so there is no transport for TLS
+    /// to protect and answering "yes" would cost nothing to implement. That
+    /// is exactly why it answers no: the simulator exists to behave like the
+    /// device, and a config page that offers TLS in the emulator and refuses
+    /// it on hardware teaches the wrong thing about the product.
+    bool supportsTls() const override { return false; }
+
     // --- simulator-only controls --------------------------------------------
 
     /// Make the next connect() fail to reach the broker. The call still

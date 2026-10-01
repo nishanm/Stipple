@@ -21,18 +21,10 @@ class App
     # "14:37", five characters: 1 to 31.
     text(1, 0, string.format("%02d:%02d", hour(), minute()), rgb(210, 210, 210))
 
-    # What is left, right-aligned by hand. "23h59" is the widest this gets at
-    # five characters, so it starts at 21 and ends at 51 - measured rather
-    # than guessed, because an overrun is clipped without complaint.
     var left = 1440 - minutes
     var remaining = string.format("%2dh%02d", left / 60, left % 60)
     text(width() - text_width(remaining), 0, remaining, rgb(80, 80, 80))
 
-    # The bar cools as the day goes on: amber in the morning, blue by night.
-    # Not decoration - it is what makes this readable from the other side of a
-    # room, where the exact length of a bar is not. Both channels move
-    # together so the middle of the day is still a colour rather than the grey
-    # you get from crossfading one against the other.
     var evening = (minutes * 255) / 1440
     var colour = rgb(255 - evening, 90 + evening / 3, evening)
 

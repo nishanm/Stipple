@@ -16,9 +16,7 @@ class App
       if (value >> bit) % 2 == 1
         rect_fill(x, y, 3, 3, colour)
       else
-        # Unlit bits are drawn, not left black. Without them the lit ones
-        # float with nothing to count against, and a binary clock you cannot
-        # count is just some squares.
+
         rect(x, y, 3, 3, rgb(34, 34, 34))
       end
     end

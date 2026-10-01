@@ -22,6 +22,19 @@
 # linked for the speaker, and a Debian 12 binary demands a glibc this device
 # does not have. 'device' still uses bookworm, because the smoke test it builds
 # is static and does not care.
+#
+# **Neither of these is the compiler CI's ARMv7 job uses, and that gap has
+# already cost one red release.** That job installs crossbuild-essential-armhf
+# on the runner, so it is whatever ubuntu-latest ships - GCC 13 at the time of
+# writing, against bullseye's 10 and bookworm's 12. Newer libstdc++ headers
+# prune transitive includes, so a translation unit that forgot <cstdint> and
+# used std::uint32_t compiled clean in both containers and failed in CI.
+#
+# To check against CI's compiler before pushing:
+#
+#   podman run --rm -v "${PWD}:/src" ubuntu:24.04 bash -c '
+#     apt-get update -qq && apt-get install -y -qq crossbuild-essential-armhf ninja-build cmake
+#     cd /src && cmake -S . -B /tmp/arm -G Ninja #       -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/arm-linux-gnueabihf.cmake #       -DSTIPPLE_DEVICE_BUILD=ON -DSTIPPLE_BUILD_TESTS=OFF #       -DSTIPPLE_WARNINGS_AS_ERRORS=ON && cmake --build /tmp/arm'
 
 [CmdletBinding()]
 param(
@@ -404,22 +417,30 @@ arm-linux-gnueabihf-readelf -V /src/build/device-arm/firmware/stipple_device \
         # is built from them: a preview drawn any other way would be a picture
         # of something that does not exist.
         $frames = Join-Path $repoRoot 'build\frames'
-        New-Item -ItemType Directory -Force $frames | Out-Null
+        $defaults = Join-Path $repoRoot 'build\frames-defaults'
+        New-Item -ItemType Directory -Force $frames, $defaults | Out-Null
 
         Invoke-Build 'host-release'
         $env:STIPPLE_SHOP_FRAMES = $frames
+        $env:STIPPLE_DEFAULT_FRAMES = $defaults
         try {
             & (Join-Path $repoRoot 'build\host-release\firmware\tests\stipple_tests.exe') `
                 'ShopScripts.WriteFramesOnRequest'
             if ($LASTEXITCODE -ne 0) { throw 'the frame dump failed' }
+            & (Join-Path $repoRoot 'build\host-release\firmware\tests\stipple_tests.exe') `
+                'ShopScripts.WriteDefaultAppFramesOnRequest'
+            if ($LASTEXITCODE -ne 0) { throw 'the default app frame dump failed' }
         } finally {
             Remove-Item Env:\STIPPLE_SHOP_FRAMES -ErrorAction SilentlyContinue
+            Remove-Item Env:\STIPPLE_DEFAULT_FRAMES -ErrorAction SilentlyContinue
         }
 
         $python = Get-Command python.exe -ErrorAction SilentlyContinue
         if (-not $python) { throw 'python.exe not found on PATH.' }
         & $python.Source (Join-Path $repoRoot 'tooling\site\build-previews.py') $frames
         if ($LASTEXITCODE -ne 0) { throw 'could not build the previews' }
+        & $python.Source (Join-Path $repoRoot 'tooling\site\build-previews.py') $defaults (Join-Path $repoRoot 'site\defaults')
+        if ($LASTEXITCODE -ne 0) { throw 'could not build the default app previews' }
     }
 
     'release' {
@@ -495,14 +516,22 @@ arm-linux-gnueabihf-readelf -V /src/build/device-arm/firmware/stipple_device \
         $node = Get-Command node -ErrorAction SilentlyContinue
         if ($node) { & $node.Source (Join-Path $repoRoot 'tooling\site\check-site.mjs') }
 
+        # The listing and the reference pages, rendered from scripts/ and
+        # docs/ - none of the three is committed, so without this the preview
+        # is a site with three holes in it.
+        & $python.Source (Join-Path $repoRoot 'tooling\site\build-shop.py')
+        if ($LASTEXITCODE -ne 0) { throw 'could not build the script shop' }
+        & $python.Source (Join-Path $repoRoot 'tooling\site\build-docs.py')
+        if ($LASTEXITCODE -ne 0) { throw 'could not render the reference pages' }
+
         # The API page fetches the specification at runtime, so it has to sit
         # beside it - the same copy the Pages workflow makes.
         Copy-Item (Join-Path $repoRoot 'docs\openapi.yaml') `
                   (Join-Path $repoRoot 'site\api\openapi.yaml') -Force
 
-        # Assemble the same layout the Pages workflow publishes, so a local
-        # preview is the page that ships rather than a near miss - the
-        # emulator's links up to / and /api/ only resolve in that shape.
+        # The emulator is not published to Pages any more, but it is still
+        # worth having here: its links up to / and /api/ only resolve in this
+        # shape, so this is the one place they can be checked.
         $emulator = Join-Path $repoRoot 'simulator\web\public'
         $into = Join-Path $repoRoot 'site\emulator'
         if (Test-Path $emulator) {

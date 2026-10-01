@@ -2,15 +2,23 @@
 #
 # Builds and publishes the website.
 #
-# Three things live there and all are generated from the repository rather
-# than maintained beside it:
+# Everything there is generated from the repository rather than maintained
+# beside it:
 #
-#   /           the landing page, drawing real golden-image frames
-#   /emulator/  the actual renderer compiled to WebAssembly
-#   /api/       openapi.yaml, rendered
+#   /            the landing page, drawing real golden-image frames
+#   /shop/       scripts/, listed, with previews rendered by the real engine
+#   /scripting/  docs/scripting.md, rendered
+#   /mqtt/       docs/mqtt.md, rendered
+#   /api/        openapi.yaml, rendered
 #
 # Nothing here is a mockup or a screenshot, which is the point: if the
 # firmware changed and the page looked wrong, a test would already be failing.
+#
+# The emulator is not published. It was, and it cost this job an Emscripten
+# toolchain and a WebAssembly build on every run to serve a page almost
+# nobody reached from here - the useful place for it is `dev.ps1 serve`,
+# where somebody is already working on the thing. Dropping it took the job
+# from two builds to one.
 #
 # Requires the repository's Pages source to be set to "GitHub Actions"
 # (Settings > Pages > Build and deployment > Source). Without that,
@@ -38,12 +46,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 3.1.61
-          actions-cache-folder: emsdk-cache
-
       - name: Install Ninja
         run: sudo apt-get update && sudo apt-get install -y ninja-build
 
@@ -55,13 +57,11 @@ jobs:
       - name: Check the panel data
         run: node tooling/site/check-site.mjs
 
-      - name: Build the emulator
-        run: |
-          emcmake cmake -S . -B build/emulator -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/emulator
-
-      - name: Verify the emulator module
-        run: node simulator/web/tools/verify.mjs
+      # The reference documents are the source of truth and stay in docs/;
+      # these pages are the same words for a second audience. Rendering them
+      # here rather than committing HTML keeps one copy of the text.
+      - name: Render the reference pages
+        run: python3 tooling/site/build-docs.py
 
       # Generated from scripts/, so the published page lists what the
       # repository actually holds rather than whatever was committed last.
@@ -80,24 +80,28 @@ jobs:
           mkdir -p build/frames
           STIPPLE_SHOP_FRAMES="$PWD/build/frames"             ./build/host-release/firmware/tests/stipple_tests ShopScripts.WriteFramesOnRequest
           python3 tooling/site/build-previews.py build/frames
+          mkdir -p build/frames-defaults
+          STIPPLE_DEFAULT_FRAMES="$PWD/build/frames-defaults" ./build/host-release/firmware/tests/stipple_tests ShopScripts.WriteDefaultAppFramesOnRequest
+          python3 tooling/site/build-previews.py build/frames-defaults site/defaults
 
       - name: Assemble
         run: |
           set -euo pipefail
-          mkdir -p dist/emulator dist/api dist/shop
+          mkdir -p dist/api dist/shop dist/scripting dist/mqtt
 
-          cp site/index.html site/stipple.css site/stipple.js site/frames.js site/favicon.svg dist/
+          cp site/index.html site/stipple.css site/stipple.js site/frames.js              site/favicon.svg site/docs.css dist/
           cp site/api/index.html dist/api/
           cp site/shop/index.html site/shop/shop.css dist/shop/
           cp site/shop/*.gif dist/shop/
+          cp site/banner.svg dist/
+          mkdir -p dist/defaults
+          cp site/defaults/*.gif dist/defaults/
+          cp site/scripting/index.html dist/scripting/
+          cp site/mqtt/index.html dist/mqtt/
 
           # Redoc fetches the specification at runtime, so it has to sit
           # beside the page that asks for it.
           cp docs/openapi.yaml dist/api/
-
-          for f in index.html styles.css app.js stipple-core.js stipple-core.wasm; do
-            cp "simulator/web/public/$f" dist/emulator/
-          done
 
           # Pages runs Jekyll otherwise, which eats files beginning with an
           # underscore and is not wanted for a hand-built site.
@@ -108,7 +112,7 @@ jobs:
           # than trusted, because the copy list above is by name and adding a
           # page without adding a line is the easy mistake - it is how
           # /shop/ 404'd the first time.
-          for page in index.html api/index.html emulator/index.html shop/index.html; do
+          for page in index.html api/index.html shop/index.html                       scripting/index.html mqtt/index.html; do
             test -f "dist/$page" || { echo "missing: $page" >&2; exit 1; }
           done
 

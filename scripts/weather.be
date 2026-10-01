@@ -7,28 +7,6 @@
 import string
 import json
 
-# Open-Meteo, which needs no account and no API key - which is most of why it
-# is the one used here. A shop script that asks you to register somewhere
-# before it draws anything is a script nobody runs.
-#
-# Set LAT and LON to yours. Everything else works as it is.
-#
-# Three things this does that a first attempt usually does not.
-#
-# **It fetches every ten minutes, not every frame.** http_follow() says what
-# to fetch and how often; the device does it on its own schedule and the
-# script draws whatever arrived last. There is no call that fetches and
-# returns, because that one would block the thread drawing the panel.
-#
-# **It tells the three kinds of nothing apart.** No network, nothing arrived
-# yet, and an answer that was fine an hour ago are different states, and a
-# panel that draws them all as a blank is a panel you cannot debug from
-# across the room.
-#
-# **It draws the sky, not an icon.** A 52x16 panel has room for a small
-# animated scene beside the number, and a scene that moves tells you it is
-# still alive - which a static cloud glyph does not.
-
 class App
   var URL
   var code, temp, lo, hi     # last parsed reading
@@ -37,9 +15,7 @@ class App
   var drops                  # rain/snow particle offsets
 
   def init()
-    # Open-Meteo wants a comma-separated list of fields. `current` gives the
-    # reading now, `daily` the range, and `timezone=auto` keeps the daily
-    # figures aligned to local midnight rather than UTC.
+
     var LAT = "52.37"
     var LON = "4.89"
     self.URL = "https://api.open-meteo.com/v1/forecast" +
@@ -67,10 +43,7 @@ class App
     if body == nil
       return
     end
-    # The body is capped at a kilobyte, and this request is shaped to fit in
-    # one - forecast_days=1 and only four fields. Asking for a week would be
-    # truncated mid-number, which json.load would refuse and this would read
-    # as the API having broken.
+
     var doc = json.load(body)
     if doc == nil
       return
@@ -132,9 +105,6 @@ class App
 
     self._sky()
 
-    # The temperature on the right, where the sky is not. Right-aligned off
-    # its measured width, because "-12" and "7" are different sizes and
-    # centring either by eye clips the other.
     var label = str(self.temp) + "'"
     var w = text_width(label)
     text(51 - w, 0, label, self._warmth(self.temp))
@@ -145,9 +115,6 @@ class App
     var rw = text_width(range)
     text(51 - rw, 9, range, rgb(70, 78, 90))
 
-    # An age bar along the very bottom of the sky, growing as the reading
-    # gets old. Ten minutes is a full sweep; past that the data is stale and
-    # you can see that it is without reading a number.
     var age = http_age_ms(self.URL)
     if age > 0
       var bar = (age * 26) / 600000

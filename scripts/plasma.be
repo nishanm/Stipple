@@ -1,15 +1,10 @@
 # name: Plasma
 # summary: Classic rolling rainbow plasma, every pixel alive and shifting.
-# author: Galadril
+# author: Stipple
 # tags: ambient, animation, generative, colour
 # panel: 52x16
 
 import math
-
-# The demoscene plasma: sum a few sine fields sampled per pixel, feed the
-# result through a rainbow, and let time slide the phases. On a 52x16 panel
-# every one of the 832 pixels is doing something every frame, which is what
-# makes it read as liquid rather than as a pattern.
 
 class App
   var t

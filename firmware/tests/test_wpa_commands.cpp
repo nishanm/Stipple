@@ -51,8 +51,20 @@ STIPPLE_TEST(WpaCommands, RefusesAPassphraseItCannotSetHonestly) {
 }
 
 STIPPLE_TEST(WpaCommands, RefusesPassphrasesThatCannotWork) {
+    // The two lengths either side of WPA's 63-character ceiling, named rather
+    // than built inside the call.
+    //
+    // Naming them also sidesteps a GCC 13 false positive. At -O3 it cannot
+    // tell a std::string temporary's small-string buffer from a heap pointer
+    // and reports -Wfree-nonheap-object on the destructor, which with -Werror
+    // failed the Linux build while MSVC said nothing at all. The code was
+    // correct both times: passphraseProblem takes a string_view and the
+    // temporary outlives the call.
+    const std::string tooLong(64, 'a');
+    const std::string longestAllowed(63, 'a');
+
     STIPPLE_CHECK(!passphraseProblem("short").empty());   // under 8
-    STIPPLE_CHECK(!passphraseProblem(std::string(64, 'a')).empty());  // over 63
+    STIPPLE_CHECK(!passphraseProblem(tooLong).empty());   // over 63
     STIPPLE_CHECK(!passphraseProblem("line\nbreak").empty());
     STIPPLE_CHECK(!passphraseProblem(std::string("nul\0byte", 8)).empty());
 
@@ -60,7 +72,7 @@ STIPPLE_TEST(WpaCommands, RefusesPassphrasesThatCannotWork) {
     // does not treat them as escapes, so they arrive as typed.
     STIPPLE_CHECK(passphraseProblem("hunter22").empty());
     STIPPLE_CHECK(passphraseProblem("back\\slash").empty());
-    STIPPLE_CHECK(passphraseProblem(std::string(63, 'a')).empty());
+    STIPPLE_CHECK(passphraseProblem(longestAllowed).empty());
     STIPPLE_CHECK(passphraseProblem("~!@#$%^&*()_+{}|:<>?").empty());
 }
 

@@ -48,6 +48,15 @@ public:
     bool install(std::string_view image, std::string& problem) override;
 
     bool rollback(std::string& problem) override;
+
+    bool restartPending() const override { return restartPending_; }
+
+private:
+    /// Set by a successful install or rollback, and never cleared. Its
+    /// lifetime is the process's, which is exactly the question being asked
+    /// - see the interface. Deliberately not persisted: a flag on disk would
+    /// survive the restart that answers it.
+    bool restartPending_ = false;
 };
 
 }  // namespace tc002

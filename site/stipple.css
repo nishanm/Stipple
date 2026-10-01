@@ -253,6 +253,21 @@ main {
 
 /* --- specimens ------------------------------------------------------------ */
 
+.banner {
+  display: block;
+  width: 100%;
+  max-width: 76rem;
+  height: auto;
+  margin: 0 auto;
+}
+
+.specimen img {
+  display: block;
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
 .specimens {
   max-width: 76rem;
   margin: 0 auto;

@@ -37,6 +37,8 @@ payload is the HTTP request body, and the reply carries the HTTP status.
 | `cmd/apps` | `POST /api/v1/apps` |
 | `cmd/apps/{id}` | `PATCH /api/v1/apps/{id}`, or `DELETE` if the payload is empty |
 | `cmd/apps/{id}/activate` | `POST /api/v1/apps/{id}/activate` |
+| `cmd/input` | `POST /api/v1/input` |
+| `cmd/sound` | `POST /api/v1/sound` |
 | `cmd/reboot` | `POST /api/v1/system/reboot` |
 
 An empty payload on `cmd/apps/{id}` deletes, because publishing an empty retained
@@ -45,6 +47,8 @@ message is how MQTT conventionally says "this is gone".
 ```bash
 mosquitto_pub -t 'stipple/kitchen-clock/cmd/notify' -m '{"text":"Dinner"}'
 mosquitto_pub -t 'stipple/kitchen-clock/cmd/settings' -m '{"display":{"power":false}}'
+mosquitto_pub -t 'stipple/kitchen-clock/cmd/input' -m '{"control":"plus"}'
+mosquitto_pub -t 'stipple/kitchen-clock/cmd/sound' -m '{"sound":"alert"}'
 ```
 
 **Anything HTTP refuses, MQTT refuses identically** — the routing happens before
@@ -79,19 +83,59 @@ is the **only** place it appears.
 
 TLS is a **request, not a guarantee**: `mqtt.tls` asks the transport for it, and
 an adapter that cannot provide it must refuse to connect rather than quietly
-sending credentials in the clear. Whether the TC002 can do TLS at all is a §46
-unknown — a third-party port bundles OpenSSL, which suggests yes at the cost of
-carrying the library. See `docs/research/tc002-platform-findings.md`.
+sending credentials in the clear. `Tc002MqttClient` does exactly that — setting
+`mqtt.tls` on hardware fails the connection today. Falling back to plaintext
+would put the broker password on the wire of a network somebody believed was
+protected, which is worse than not connecting.
+
+That is a gap rather than an impossibility. The question used to be whether the
+device could do TLS at all; it is now answered. The TC002's own OpenSSL cannot
+— it is an OpenWrt build with every protocol version compiled out — so Stipple
+carries BearSSL, which is what makes `https` work for scripts. Pointing the
+MQTT transport at the same TLS is work that has not been done, not a wall.
+
+## Home Assistant
+
+Turn on `mqtt.discovery` and the device publishes Home Assistant discovery
+documents under `homeassistant/...`, retained, so the entities survive a Home
+Assistant restart rather than vanishing until the device next says something.
+
+Five entities, all carrying the same device block so they group under one
+device instead of scattering across the dashboard:
+
+| Entity | Component | What it is |
+|---|---|---|
+| Panel | `light` | On, off and brightness |
+| Volume | `number` | 0–100 |
+| Battery | `sensor` | Percentage, absent on a device that cannot report one |
+| Signal | `sensor` | RSSI |
+| App | `sensor` | Which app is on screen |
+
+The panel uses the **template** schema rather than the default. The default
+would send `ON` to a command topic, and this device speaks a settings patch — a
+template lets Home Assistant emit exactly the JSON that already works, so
+discovery adds no second control path to keep in step with the first.
+
+Turning the setting off withdraws the entities by publishing an empty payload
+to each config topic, which is how MQTT says "this is gone". Leaving them
+orphaned in somebody's dashboard would be worse than never publishing them.
 
 ## What is not built
 
-- **No transport.** `IPlatformServices::mqtt()` returns nullptr on every real
-  adapter; only the simulator implements `IMqttClient`. Everything above is
-  exercised against an in-memory broker. The device implementation arrives with
-  Phase 7, and nothing above the platform boundary changes when it does.
-- **No Home Assistant discovery.** `mqtt.discovery` is stored and does nothing
-  yet. It is a setting rather than a promise; the documents it would publish need
-  a real broker and a real Home Assistant to test against.
+- **MQTT over TLS.** The device refuses `mqtt.tls` rather than downgrading,
+  and now says so: `capabilities.mqttTls` is false on `/api/v1/device` and the
+  web page disables the switch and explains it, rather than leaving a refusal
+  that looks exactly like an unreachable broker.
+
+  What it would take is worth writing down, because it is not simply "call the
+  TLS we already have". That TLS is driven by BearSSL's `br_sslio`, which
+  blocks until it has what it needs — fine for the fetch worker, which has a
+  thread to block. This transport is polled from the render loop and must
+  never wait, so it needs BearSSL's engine API instead. And the transport
+  takes a numeric address today, because a statically linked binary cannot
+  use `getaddrinfo`; certificates are issued for names, so TLS also needs the
+  resolver the HTTP client carries. Two pieces, neither of them large on its
+  own, neither of them a wall.
 - **QoS 2.** Deliberately not offered. It costs a four-way handshake and
   per-message state on a device with an unmeasured RAM budget, to solve a problem
   this product does not have: a duplicated "show a notification" is a much

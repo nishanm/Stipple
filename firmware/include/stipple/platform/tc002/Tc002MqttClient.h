@@ -54,6 +54,11 @@ public:
     bool subscribe(std::string_view topicFilter, int qos) override;
     void poll(std::uint64_t nowMillis) override;
 
+    /// Not yet. See the class comment: the TLS exists on this device, but
+    /// this transport is polled from the render loop and cannot use it as it
+    /// stands.
+    bool supportsTls() const override { return false; }
+
     /// Messages refused because the queue was full. Diagnostics only.
     std::uint32_t droppedCount() const noexcept { return dropped_; }
 

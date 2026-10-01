@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
+
+#include "stipple/script/ScriptConfig.h"
 
 namespace stipple {
 
@@ -142,11 +145,20 @@ public:
     /// has none, so the press falls through to whatever it would normally have
     /// done - a script that does not want the button must not swallow it.
     ///
-    /// Only the action button is offered, never the knob. The knob is how
-    /// somebody moves between apps, and a script that took it would be a
-    /// script you could not leave. The stopwatch made the same call for the
-    /// same reason.
+    /// By default only the action button is offered, under the name "select".
+    /// A script that declares `# @input exclusive` also receives "minus",
+    /// "plus", "left" and "right" - see inputMode() and ADR 0024. The middle
+    /// button is never offered to any script in any mode: it is how somebody
+    /// leaves, and a script able to take it would be a script you could not
+    /// leave. The stopwatch made the same call for the same reason.
     virtual bool button(std::string_view id, std::string_view name) = 0;
+
+    /// How much of the panel's input this script has asked for.
+    ///
+    /// ActionOnly for anything missing or that did not ask, which is what
+    /// makes this safe to consult unconditionally: every script written
+    /// before ADR 0024 keeps the behaviour it was written against.
+    virtual InputMode inputMode(std::string_view id) const = 0;
 
     /// How long a script would like on screen, in milliseconds.
     ///
@@ -196,6 +208,26 @@ public:
     /// means there is no path where a script reads a stale clock because
     /// somebody forgot a call.
     virtual void setEnvironment(const ScriptEnvironment& environment) noexcept = 0;
+
+    /// What this script has asked the device to collect for it.
+    ///
+    /// Declared in `# @config` comments at the top of the source and parsed
+    /// from it, so there is nothing separate to keep in step: editing the
+    /// declaration is editing the field.
+    virtual std::vector<Setting> settings(std::string_view id) const = 0;
+
+    /// The value a setting currently holds, rendered as text, or empty when
+    /// nothing has been set and the script's own fallback applies.
+    virtual std::string settingValue(std::string_view id,
+                                     std::string_view key) const = 0;
+
+    /// Set one, converting to whatever the declaration said it was.
+    ///
+    /// False when the script or key is unknown, or the value does not fit
+    /// what was declared. A number field handed "banana" is a caller error
+    /// worth reporting, not a zero worth storing.
+    virtual bool setSetting(std::string_view id, std::string_view key,
+                            std::string_view value) = 0;
 
     /// Why a script is not running, or an empty view when it is fine.
     ///

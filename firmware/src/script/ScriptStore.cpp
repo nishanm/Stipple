@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "stipple/script/ScriptStore.h"
 
+#include "stipple/script/ScriptConfig.h"
 #include "stipple/script/IScriptHttp.h"
 #include "stipple/script/IScriptMqtt.h"
 
@@ -88,6 +89,8 @@ ScriptPutResult ScriptStore::put(std::string id, std::string name, std::string s
     entry.host->setMqtt(mqtt_, entry.info.id);
     entry.host->setHttp(http_, entry.info.id);
     entry.host->setMicrophone(microphone_);
+    entry.settings = parseSettings(entry.info.source);
+    entry.input = parseInputMode(entry.info.source);
     refresh(entry);
 
     // A replacement starts with no watches. The new source may well want
@@ -212,6 +215,20 @@ bool ScriptStore::button(std::string_view id, std::string_view name) {
     return result == ScriptHost::EventResult::Handled;
 }
 
+InputMode ScriptStore::inputMode(std::string_view id) const {
+    // Deliberately not gated on the script being ready. A script that failed
+    // to compile is still the app on screen, and the controls should behave
+    // the way its header says while somebody is looking at the error - not
+    // silently revert to driving the carousel, which is the one thing that
+    // would make the failure hard to read.
+    for (const Entry& entry : entries_) {
+        if (entry.info.id == id) {
+            return entry.input;
+        }
+    }
+    return InputMode::ActionOnly;
+}
+
 std::uint32_t ScriptStore::durationMillis(std::string_view id) {
     Entry* entry = findEntry(id);
     if (entry == nullptr || entry->host == nullptr || !entry->host->ready()) {
@@ -263,6 +280,149 @@ void ScriptStore::setMicrophone(platform::IMicrophone* microphone) noexcept {
             entry.host->setMicrophone(microphone);
         }
     }
+}
+
+
+// --- declared settings -------------------------------------------------------
+
+std::vector<Setting> ScriptStore::settings(std::string_view id) const {
+    for (const Entry& entry : entries_) {
+        if (entry.info.id == id) {
+            return entry.settings;
+        }
+    }
+    return {};
+}
+
+std::string ScriptStore::settingValue(std::string_view id,
+                                      std::string_view key) const {
+    for (const Entry& entry : entries_) {
+        if (entry.info.id != id || entry.host == nullptr) {
+            continue;
+        }
+        for (const auto& held : entry.host->stored()) {
+            if (held.first != key) {
+                continue;
+            }
+            // Rendered as text whatever it is stored as, because that is
+            // what a form field round-trips. The declaration says how to
+            // read it back.
+            switch (held.second.kind) {
+                case ScriptHost::Stored::Kind::Text:
+                    return held.second.text;
+                case ScriptHost::Stored::Kind::Integer:
+                    return std::to_string(held.second.integer);
+                case ScriptHost::Stored::Kind::Boolean:
+                    return held.second.boolean ? "true" : "false";
+                case ScriptHost::Stored::Kind::Real: {
+                    std::string out = std::to_string(held.second.real);
+                    // to_string pads a float to six decimals, and "1.000000"
+                    // in a form field is a number somebody has to edit twice.
+                    while (out.size() > 1 && out.back() == '0') {
+                        out.pop_back();
+                    }
+                    if (!out.empty() && out.back() == '.') {
+                        out.pop_back();
+                    }
+                    return out;
+                }
+            }
+        }
+        return {};
+    }
+    return {};
+}
+
+bool ScriptStore::setSetting(std::string_view id, std::string_view key,
+                             std::string_view value) {
+    Entry* entry = findEntry(id);
+    if (entry == nullptr || entry->host == nullptr) {
+        return false;
+    }
+
+    // Only declared keys. Without this the API would be a way to write
+    // arbitrary entries into a script's private store from outside, which is
+    // a different feature with different consequences.
+    const Setting* declared = nullptr;
+    for (const Setting& setting : entry->settings) {
+        if (setting.key == key) {
+            declared = &setting;
+            break;
+        }
+    }
+    if (declared == nullptr) {
+        return false;
+    }
+
+    ScriptHost::Stored stored;
+    switch (declared->type) {
+        case Setting::Type::Text: {
+            const std::size_t limit =
+                declared->maxLength > 0
+                    ? static_cast<std::size_t>(declared->maxLength)
+                    : ScriptHost::kMaxStoreTextBytes;
+            if (value.size() > limit) {
+                return false;
+            }
+            stored.kind = ScriptHost::Stored::Kind::Text;
+            stored.text.assign(value);
+            break;
+        }
+        case Setting::Type::Number: {
+            if (value.empty() || value.size() > 11) {
+                return false;
+            }
+            long long parsed = 0;
+            bool negative = false;
+            std::size_t at = 0;
+            if (value[0] == '-') {
+                negative = true;
+                at = 1;
+                if (value.size() == 1) {
+                    return false;
+                }
+            }
+            for (; at < value.size(); ++at) {
+                if (value[at] < '0' || value[at] > '9') {
+                    return false;
+                }
+                parsed = parsed * 10 + (value[at] - '0');
+            }
+            if (negative) {
+                parsed = -parsed;
+            }
+            if (declared->bounded &&
+                (parsed < declared->minimum || parsed > declared->maximum)) {
+                return false;
+            }
+            stored.kind = ScriptHost::Stored::Kind::Integer;
+            stored.integer = static_cast<std::int32_t>(parsed);
+            break;
+        }
+        case Setting::Type::Boolean: {
+            // "on" and "1" as well as "true", because that is what a form
+            // checkbox and a shell script respectively send.
+            const bool yes = value == "true" || value == "1" || value == "on";
+            const bool no = value == "false" || value == "0" ||
+                            value == "off" || value.empty();
+            if (!yes && !no) {
+                return false;
+            }
+            stored.kind = ScriptHost::Stored::Kind::Boolean;
+            stored.boolean = yes;
+            break;
+        }
+    }
+
+    if (!entry->host->setStored(key, std::move(stored))) {
+        return false;
+    }
+
+    // The library changed, so it needs writing back. Without this a setting
+    // would survive until the next reboot and then quietly revert, which is
+    // the worst of both - it appears to work.
+    ++revision_;
+    return true;
 }
 
 void ScriptStore::collectGarbage(std::string_view id) {

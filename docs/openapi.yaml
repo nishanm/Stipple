@@ -219,6 +219,89 @@ paths:
         "405": { $ref: "#/components/responses/MethodNotAllowed" }
         "422": { $ref: "#/components/responses/Unprocessable" }
 
+  /sound:
+    get:
+      tags: [device]
+      summary: What this device can play
+      description: |
+        The catalogue, so a caller can offer it rather than hard-code it. The
+        firmware is the only thing that knows which sounds exist, and a
+        dropdown built from a guess goes stale the moment one is added.
+
+        `silentName` is reported alongside the list because "silent" is a
+        valid setting and not a sound, so a UI building a dropdown needs both
+        facts.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sounds:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, examples: ["success"] }
+                        durationMillis: { type: integer, examples: [180] }
+                  silentName: { type: string, examples: ["none"] }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+    post:
+      tags: [device]
+      summary: Play a sound, a tone, or stop
+      description: |
+        Exactly one of `sound`, `frequencyHz` or `stop` is required.
+
+        **An unknown name is `422`, never a substituted beep.** If you asked
+        for something specific and got a `204`, that is what played. `GET` this
+        path to find out which names exist.
+
+        Stopping is its own field rather than a magic name, because "stop" is
+        not a sound and a caller asking for silence should not have to know
+        that the catalogue happens not to contain it.
+
+        The inline tone is bounded at both ends, and the limits match what a
+        script gets: there is no reason the network should reach further into
+        the speaker than the device's own code does.
+
+        A device with no speaker answers `404` on both verbs — absence, not a
+        malformed request (ADR 0013). A route that accepted sounds on a silent
+        device would answer `204` for ever and the caller would have no way to
+        find out why the room was quiet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sound:
+                  type: string
+                  description: A name from `GET /sound`.
+                stop:
+                  type: boolean
+                  description: Stop whatever is playing. Takes precedence.
+                frequencyHz:
+                  type: integer
+                  minimum: 50
+                  maximum: 8000
+                  description: An inline tone, for a noise the catalogue has not got.
+                durationMillis:
+                  type: integer
+                  minimum: 1
+                  maximum: 5000
+                  default: 150
+                  description: Tone only. Out-of-range is refused, not clamped.
+      responses:
+        "204": { description: Playing, or stopped. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "405": { $ref: "#/components/responses/MethodNotAllowed" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
   /apps:
     get:
       tags: [apps]
@@ -779,7 +862,28 @@ paths:
                       updates it. Not an error.
                   canRollBack: { type: boolean }
                   maxBytes: { type: integer }
-                  version: { type: string }
+                  version:
+                    type: string
+                    description: |
+                      The version of the process answering this request, which
+                      is not necessarily the version of the file at `path` -
+                      see `restartPending`.
+                  restartPending:
+                    type: boolean
+                    description: |
+                      True when an install or rollback has happened since this
+                      process started, so what is on disk is not what is
+                      running.
+
+                      The file alone cannot answer this: an installed override
+                      looks the same whether it is waiting for a restart or
+                      already loaded, and `installedBytes` reports the same
+                      number either way. What can be answered is that an
+                      install during this process's lifetime necessarily
+                      happened after this process loaded.
+
+                      A restart clears it, because the flag lives only in
+                      memory.
         "501": { $ref: "#/components/responses/NotSupported" }
     post:
       tags: [system]
@@ -813,6 +917,13 @@ paths:
                   bytes: { type: integer }
                   canRollBack: { type: boolean }
                   rebootRequired: { type: boolean }
+                  restartPending: { type: boolean }
+                  runningVersion:
+                    type: string
+                    description: |
+                      The version still running, so a client can name what is
+                      being replaced rather than leaving somebody to read the
+                      byte count as a version.
                   note: { type: string }
         "413": { $ref: "#/components/responses/TooLarge" }
         "422":
@@ -1047,6 +1158,15 @@ components:
             reboot: { type: boolean }
             battery: { type: boolean }
             microphone: { type: boolean }
+            mqttTls:
+              type: boolean
+              description: |
+                Whether the broker transport can honour `mqtt.tls`. False on
+                current builds: the device carries TLS for outbound `https`,
+                but the MQTT transport does not use it yet and refuses the
+                connection rather than downgrading. Reported so a client can
+                say so before the switch is turned on, rather than leaving a
+                refusal looking like an unreachable broker.
         battery:
           type: object
           properties:

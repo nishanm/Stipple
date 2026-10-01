@@ -127,6 +127,12 @@ SECTIONS: list[Section] = [
             ("Services", "getprop", "init.svc"),
             ("Process list", "ps -A 2>/dev/null || ps"),
             ("Init scripts", "ls -la /etc/init.d/ 2>/dev/null || echo 'none'"),
+            # /res/bin has never been enumerated, and the omission has already
+            # cost a wrong conclusion: the findings doc calls the /bin listing
+            # "the complete contents" and reasons from it that the device has no
+            # DHCP client, while /res/bin/hciattach sits there running as an init
+            # service. Whatever else lives here has been invisible the same way.
+            ("Binaries on /res", "ls -la /res/bin /res/sbin 2>/dev/null || echo 'none'"),
         ],
     ),
     Section(
@@ -163,6 +169,73 @@ SECTIONS: list[Section] = [
             ("Sound devices", "ls -la /dev/snd/ 2>/dev/null || echo 'none'"),
             ("ALSA cards", "cat /proc/asound/cards 2>/dev/null || echo 'none'"),
             ("I2C buses", "ls -la /dev/i2c* 2>/dev/null || echo 'none'"),
+        ],
+    ),
+    Section(
+        "Bluetooth and USB host",
+        "Both are routes to a second controller, and neither has ever been "
+        "looked at. The radio is almost certainly present - the Wi-Fi part is an "
+        "AIC8800 combo, libzkgui.so insmods aic_btusb.ko and /dev/ttyS3 is "
+        "documented as the HCI UART - but a radio with no host stack is not a "
+        "capability. What decides the cost is whether the kernel carries the "
+        "Bluetooth subsystem: with it, a paired gamepad becomes another "
+        "/dev/input/eventN that Tc002Input already knows how to read, and "
+        "without it a BLE host would have to be written from nothing. "
+        "/proc/tty/ldiscs naming n_hci is the single most informative line in "
+        "this section. The USB half asks the cheaper version of the same "
+        "question: a HID-capable host controller would take a wired pad with no "
+        "protocol work at all.",
+        [
+            ("Bluetooth class", "ls -la /sys/class/bluetooth/ 2>/dev/null "
+                                "|| echo 'no /sys/class/bluetooth'"),
+            ("Bluetooth module", "ls -la /sys/module/bluetooth/ 2>/dev/null "
+                                 "|| echo 'bluetooth core not present'"),
+            ("Line disciplines", "cat /proc/tty/ldiscs 2>/dev/null || echo 'none'"),
+            ("Loaded modules", "cat /proc/modules"),
+            # `ls`, not `find`. The first version of this line used find and
+            # reported "none" on a device that plainly has two modules on
+            # disk: there is no `find` on the TC002, the command failed, and
+            # the `|| echo` branch dressed the failure up as a finding. A
+            # probe that cannot tell "absent" from "the tool is missing" is
+            # worse than no probe, because its answer looks like data.
+            ("Modules on disk", "ls -la /lib/modules/*/ 2>/dev/null || echo 'none'"),
+            # uhid decides whether a userspace BLE HID client could hand the
+            # kernel an input device. It is not on this hardware, which is
+            # why a gamepad has to be decoded in the adapter instead.
+            ("Misc devices", "cat /proc/misc 2>/dev/null || echo 'none'"),
+            ("HID drivers", "ls /sys/bus/hid/drivers 2>/dev/null || echo 'no hid bus'"),
+            ("USB drivers", "ls /sys/bus/usb/drivers 2>/dev/null || echo 'no usb bus'"),
+            ("Bluetooth userland", "ls /bin /sbin /usr/sbin /res/bin 2>/dev/null",
+             "hciattach bluetoothd hcitool bccmd btmgmt rfkill bluetooth"),
+            ("Bluetooth libraries", "ls -la /lib/libbluetooth* /lib/libbt* "
+                                    "/res/lib/libbt* /res/lib/libbluetooth* 2>/dev/null "
+                                    "|| echo 'none'"),
+            # AIC parts download firmware over the link before HCI answers, so a
+            # blob on disk is the difference between attaching the radio and
+            # reverse-engineering a vendor handshake.
+            ("Radio firmware", "ls -la /lib/firmware /etc/firmware /res/firmware "
+                               "/vendor/etc/firmware 2>/dev/null || echo 'none'"),
+            ("rfkill", "ls -la /sys/class/rfkill/ 2>/dev/null || echo 'none'"),
+            ("Bluetooth properties", "getprop", "bluetooth bt. hci"),
+            # otg_role and usb_det are the only two files in this directory
+            # that are safe to read. `usb_host`, `usb_device` and `usb_null`
+            # sit beside them and *act when read* - catting usb_null answers
+            # "null_chose finished!" and leaves the port with no bus at all.
+            # Never widen this to a glob over the directory; on a unit reached
+            # over USB rather than Wi-Fi it would be a self-inflicted lockout.
+            ("USB OTG role", "cat /sys/bus/platform/devices/soc:usbotg/otg_role "
+                             "2>/dev/null || echo 'none'"),
+            ("USB detect", "cat /sys/bus/platform/devices/soc:usbotg/usb_det "
+                           "2>/dev/null || echo 'none'"),
+            ("USB devices", "ls -la /sys/bus/usb/devices/ 2>/dev/null || echo 'no usb bus'"),
+            # One EHCI, one UDC, one OTG node on this board, so a second
+            # connector on the case is not a second USB. Worth printing,
+            # because "plug the pad into the other port" is the first thing
+            # anyone tries and this says whether there is one.
+            ("USB controllers", "ls /sys/bus/platform/devices/ 2>/dev/null",
+             "ehci udc usbotg"),
+            ("HID bus", "ls -la /sys/bus/hid/devices/ 2>/dev/null || echo 'no hid bus'"),
+            ("Input classes", "ls -la /sys/class/input/ 2>/dev/null || echo 'none'"),
         ],
     ),
     Section(

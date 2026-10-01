@@ -191,6 +191,7 @@ RouteMatch matchRoute(std::string_view path) {
         else if (head == "scripts") match.resource = Resource::ScriptCollection;
         else if (head == "settings") match.resource = Resource::Settings;
         else if (head == "input") match.resource = Resource::Input;
+        else if (head == "sound") match.resource = Resource::Sound;
         else if (head == "network") match.resource = Resource::Network;
         return match;
     }

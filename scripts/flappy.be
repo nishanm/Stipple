@@ -31,12 +31,6 @@ class App
     self.score = 0
     self.over = false
 
-    # Waits for the first press rather than starting the moment it appears.
-    #
-    # This app arrives by carousel: it rotates into view whether or not
-    # anybody is looking at it. A game that started immediately would already
-    # have killed you by the time you glanced up, and the first thing you ever
-    # saw of it would be a score of zero.
     self.started = false
   end
 
@@ -50,10 +44,7 @@ class App
       self.started = true
       self.fall = -90
     else
-      # 0.9 px per frame upward against 0.08 of gravity: about eleven frames
-      # of rise, a little over four pixels. Tuned so a single tap clears a gap
-      # and a held rhythm holds height - the difference between a game and a
-      # twitch test.
+
       self.fall = -90
     end
   end
@@ -90,9 +81,6 @@ class App
     self.fall += 8
     self.y += self.fall
 
-    # The ceiling stops you; the floor kills you. A game you cannot lose by
-    # doing nothing is not a game, and a ceiling that killed you would punish
-    # the one input the game has.
     if self.y < 0
       self.y = 0
       self.fall = 0
@@ -105,9 +93,7 @@ class App
     self.pipeX -= 1
     if self.pipeX < -2
       self.pipeX = width() + 6
-      # Gaps kept clear of the very top and bottom. One that needs a
-      # pixel-perfect hold on the first frame is not difficulty, it is a coin
-      # toss.
+
       self.gapY = 2 + (math.rand() % (height() - 7))
       self.score += 1
     end

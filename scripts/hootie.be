@@ -1,23 +1,10 @@
 # name: Hootie
 # summary: A virtual pet owl with a full life - it hatches, grows, ages, and dies if neglected.
-# author: Galadril
+# author: Stipple
 # tags: pet, interactive, animation, ambient
 # panel: 52x16
 
 import math
-
-# A pocket tamagotchi built from what the runtime actually gives a script:
-# draw(), on_button() and persistent store. Three needs (fullness, happiness,
-# energy) drift down in real time, tracked with now_ms deltas since there is no
-# wall clock to trust. Everything that matters is written to the store, so the
-# pet - and its whole life so far - survives a reboot.
-#
-# Life stages: EGG -> BABY -> ADULT -> ELDER -> (death) -> a fresh EGG of the
-# next generation. Age advances only while the app is on screen, in seconds.
-# Meeting the owl's needs keeps its health up; leaving every need at zero drains
-# health until it dies of neglect, and a long, well-kept life ends of old age.
-#
-# All time thresholds below are in on-screen seconds and are meant to be tuned.
 
 class Hootie
   var full, happy, energy   # the three needs, 0..100
@@ -71,11 +58,6 @@ class Hootie
 	return 15000
   end
 
-  # The device only ever hands a script the single action button - the knob and
-  # side buttons belong to the carousel and volume. So one press opens the menu,
-  # each further press steps to the next action, and draw() commits it once you
-  # stop pressing. A dead owl's press lays the next egg; an egg's press is
-  # ignored, because there is nothing to do to an egg but wait.
   def on_button(b)
 	if self.stage == 4
 	  self._newEgg()
@@ -145,19 +127,6 @@ class Hootie
   def _age(dt)
 	self.ageacc += dt
 
-	# An owl off the carousel still ages.
-	#
-	# now_ms() is the device clock rather than time on screen, so the
-	# first frame after a night away sees the whole night as one delta -
-	# and catching that up a second at a time is thirty thousand
-	# iterations in a single frame, which loses the frame and stops the
-	# script. That is exactly how this died on a real device.
-	#
-	# So: never more than an hour owed, and never more than two minutes
-	# of it paid off per frame. An owl ignored overnight is hungry
-	# rather than dead of thirty thousand seconds of neglect, and it
-	# gets there over the next second of real time instead of trying to
-	# arrive all at once.
 	if self.ageacc > 3600000
 	  self.ageacc = 3600000
 	end

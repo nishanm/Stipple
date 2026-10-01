@@ -590,6 +590,15 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
         return;
     }
 
+    // A script that asked for the controls gets them before anything else
+    // looks at the action (ADR 0024). Before, because the whole point is that
+    // the knob moves a paddle instead of the carousel - checking afterwards
+    // would mean the app had already changed.
+    if (offerToScript(action.action)) {
+        scheduler_.invalidate();
+        return;
+    }
+
     switch (action.action) {
         // action.repeat is deliberately ignored for navigation.
         //
@@ -856,6 +865,57 @@ void ApplicationHost::adjustCurrentSetting(int steps) {
         case input::SettingSlot::Count:
             break;
     }
+}
+
+bool ApplicationHost::offerToScript(input::Action action) {
+    if (scripts_ == nullptr || navigator_.inSettings() || splashActive_) {
+        return false;
+    }
+
+    const app::App* active = carousel_.active();
+    if (active == nullptr || active->builtin != app::Builtin::Script) {
+        return false;
+    }
+    if (scripts_->inputMode(active->id) != script::InputMode::Exclusive) {
+        return false;
+    }
+
+    // The names /api/v1/input already uses, so a press from a browser, a
+    // broker and a thumb are indistinguishable to the script - which is what
+    // makes a phone a usable controller without the firmware knowing.
+    //
+    // "select" rather than "press" because that is the name every script
+    // written before this tests for, and running those unchanged is worth
+    // more than a tidier noun.
+    const char* name = nullptr;
+    switch (action) {
+        case input::Action::AppPrevious:  name = "left";   break;
+        case input::Action::AppNext:      name = "right";  break;
+        case input::Action::AppAction:    name = "select"; break;
+        case input::Action::AdjustDown:   name = "minus";  break;
+        case input::Action::AdjustUp:     name = "plus";   break;
+
+        // Everything else stays where it was, and two of them deliberately:
+        //
+        //   Back / SettingsToggle - the middle button and a held knob. These
+        //   are the way out, and a script that could take them would be a
+        //   script you could not leave. That was the whole objection to
+        //   offering the knob at all, and reserving these answers it.
+        //
+        //   BrightnessUp / BrightnessDown - holding - or +. A game has no use
+        //   for them and a person squinting at a dim panel does.
+        default:
+            return false;
+    }
+
+    // action.repeat is ignored, for the same reason navigation ignores it: a
+    // fast wrist accelerates detents up to 5x, which is right for brightness
+    // and wrong for a paddle. One detent, one event.
+    //
+    // False when the script has no on_button at all, and the action then does
+    // its ordinary job - a script that declared @input and forgot to handle it
+    // would otherwise be an app with five dead controls and no way to tell.
+    return scripts_->button(active->id, name);
 }
 
 void ApplicationHost::activateCurrentSetting() {

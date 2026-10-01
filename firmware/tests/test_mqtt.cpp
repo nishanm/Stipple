@@ -197,6 +197,21 @@ STIPPLE_TEST(MqttBridge, CommandsBecomeApiCalls) {
     STIPPLE_CHECK_EQ(activate.request.path, std::string("/api/v1/apps/clock/activate"));
     STIPPLE_CHECK(activate.request.method == stipple::api::Method::Post);
 
+    auto input = translate("stipple/abc/cmd/input", R"({"control":"plus"})");
+    STIPPLE_CHECK(input.understood);
+    STIPPLE_CHECK_EQ(input.request.path, std::string("/api/v1/input"));
+    STIPPLE_CHECK(input.request.method == stipple::api::Method::Post);
+    STIPPLE_CHECK_EQ(input.request.body, std::string(R"({"control":"plus"})"));
+
+    // The payload passes through untouched, so the API is the only thing that
+    // decides whether a sound name is real - two paths validating the same
+    // name separately is how they come to disagree.
+    auto sound = translate("stipple/abc/cmd/sound", R"({"sound":"chime"})");
+    STIPPLE_CHECK(sound.understood);
+    STIPPLE_CHECK_EQ(sound.request.path, std::string("/api/v1/sound"));
+    STIPPLE_CHECK(sound.request.method == stipple::api::Method::Post);
+    STIPPLE_CHECK_EQ(sound.request.body, std::string(R"({"sound":"chime"})"));
+
     auto reboot = translate("stipple/abc/cmd/reboot", "");
     STIPPLE_CHECK(reboot.understood);
     STIPPLE_CHECK_EQ(reboot.request.path, std::string("/api/v1/system/reboot"));

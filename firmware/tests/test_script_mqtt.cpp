@@ -64,6 +64,7 @@ public:
         return true;
     }
     void poll(std::uint64_t) override {}
+    bool supportsTls() const override { return false; }
 };
 
 /// A gateway wired to a fake client and already "connected".

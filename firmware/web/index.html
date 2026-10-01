@@ -23,6 +23,9 @@
         <span id="device-name">&hellip;</span>
         <span class="muted" id="device-version"></span>
     </div>
+    <!-- Its own page rather than a tab: this one is read at a desk, that one
+         is held sideways in two hands. Sharing a layout would spoil both. -->
+    <a class="pill" href="gamepad.html" id="gamepad-link" title="Use a phone as a controller">Controller</a>
     <span class="pill" id="connection">connecting</span>
 </header>
 
@@ -285,6 +288,20 @@
                 </div>
             </div>
 
+            <!-- What the script asked to be asked.
+                 Declared in `# @config` comments at the top of the source and
+                 rendered here, so changing a channel ID is filling in a field
+                 rather than editing Berry and hoping. Empty for a script that
+                 declares nothing, which is most of them. -->
+            <div class="settings" id="script-settings" hidden>
+                <h3 class="settings__title">Settings</h3>
+                <div id="script-settings-fields"></div>
+                <p class="help settings__note">
+                    Saved as you change them, separately from the source
+                    &mdash; so setting a value cannot recompile anything.
+                </p>
+            </div>
+
             <!-- A real textarea with a highlighted copy behind it.
                  Still no editor library. This page is compiled into the
                  firmware (cmake/EmbedWebAssets.cmake) and ADR 0012 keeps
@@ -326,15 +343,19 @@
     <h2>Sound</h2>
     <div class="field">
         <label for="notify-sound">Notification sound</label>
+        <!-- Filled from GET /api/v1/sound, not hard-coded. This list used to
+             name three of the five sounds the firmware had, which is the
+             failure mode of writing a catalogue down twice. Silent stays in
+             the markup because it is a setting rather than a sound, so the
+             select is never empty even if the request fails. -->
         <select id="notify-sound" data-setting="notifications.sound">
             <option value="none">Silent</option>
-            <option value="beep">Beep</option>
-            <option value="chime">Chime</option>
-            <option value="alert">Alert</option>
         </select>
+        <button class="btn" id="notify-sound-test" type="button">Play it</button>
         <p class="help" id="notify-sound-help">
             Played when a notification appears, unless it asks for a different
-            one.
+            one. <strong>Play it</strong> makes the noise now, so you can pick
+            one without waiting for something to happen.
         </p>
     </div>
 
@@ -423,7 +444,7 @@
             <input type="checkbox" id="mqtt-tls" data-setting="mqtt.tls">
             <span>Use TLS</span>
         </label>
-        <p class="help">
+        <p class="help" id="mqtt-tls-help">
             The device refuses to connect rather than falling back to plaintext, so
             credentials are never sent in the clear by accident.
         </p>
@@ -513,6 +534,10 @@
         <input id="firmware-file" type="file" accept=".so,application/octet-stream">
         <button class="btn" id="firmware-upload" type="button">Install</button>
         <button class="btn" id="firmware-rollback" type="button" hidden>Go back</button>
+        <!-- Beside the thing that needs it. There is a Restart device button
+             further down this tab, but an update that only takes effect on
+             restart should not send somebody looking for it. -->
+        <button class="btn" id="firmware-restart" type="button" hidden>Restart now</button>
     </div>
     <p class="help">
         Upload <code>libstipple.so</code> from a release. It is checked here

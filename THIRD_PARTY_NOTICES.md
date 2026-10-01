@@ -41,6 +41,19 @@ and no network. `firmware/script/berry_conf.h` records how to regenerate them.
 
 Neither is linked into any artefact; both are developer tooling.
 
+## Acknowledgement: the AWTRIX NG scripting interface
+
+Stipple's script-facing interface — the shape of a script, the builtin names,
+`store.get` / `store.set` and the `# @config` header — is modelled on what
+[AWTRIX NG](https://github.com/Blueforcer/awtrix-ng) documents in its
+[scripting guide](https://blueforcer.github.io/awtrix-ng/guides/scripting/),
+and the credit for designing it belongs to that project and to Blueforcer. None
+of it is Berry's; Berry is only the language underneath. Matching it is
+deliberate: scripts already written against that interface run here. It is a
+reimplementation from the published documentation — no AWTRIX source was read
+or used, and none will be. See [`docs/scripting.md`](docs/scripting.md) for the
+interface itself and where Stipple's diverges.
+
 ## Acknowledgement: the AWTRIX NG TC002 port
 
 [`sanderdw/awtrix-ng-tc002`](https://github.com/sanderdw/awtrix-ng-tc002) got to

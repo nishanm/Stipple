@@ -125,8 +125,15 @@ bool Tc002MqttClient::connect(const MqttConnectOptions& options, IMqttListener& 
     // Refused outright rather than downgraded. Falling back to plaintext would
     // put the broker password on the wire of a network the user believed was
     // protected, which is worse than not connecting at all.
+    //
+    // Returning false rather than landing in Disconnected, because those mean
+    // different things to the caller: Disconnected is "the broker is not
+    // answering, try again later", and the reconnect policy will do exactly
+    // that - forever, on a device that is never going to succeed. This is an
+    // argument the adapter can see is unusable, which is what the interface
+    // says false is for, and it is what stops the retry loop.
     if (options_.tls) {
-        setState(MqttState::Disconnected);
+        setState(MqttState::Disabled);
         return false;
     }
 

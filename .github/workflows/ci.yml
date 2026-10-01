@@ -71,14 +71,27 @@ jobs:
           node tooling/site/check-site.mjs
 
       # The shop page is generated from scripts/, so a script added without a
-      # header, or added without being named in the test that runs it, fails
-      # here rather than being published unchecked. Regenerating also proves
-      # the committed page matches the directory it claims to list.
-      - name: Rebuild the script shop
+      # `# name:` or `# summary:` header fails here rather than being
+      # published unchecked.
+      #
+      # **It builds the page and throws it away.** The page used to be
+      # committed and this step diffed against it, which quietly broke the
+      # submission promise: adding a script is supposed to be one file and a
+      # pull request, and that check meant every contributor also had to run
+      # a Python script and commit two hundred lines of generated HTML they
+      # had no reason to expect. The Pages job rebuilds it on every deploy,
+      # so the committed copy was never the one anybody read.
+      - name: Check the script shop builds
         if: runner.os == 'Linux'
-        run: |
-          python3 tooling/site/build-shop.py
-          git diff --exit-code site/shop/index.html
+        run: python3 tooling/site/build-shop.py
+
+      # Same reason: not to compare against a committed file, but because the
+      # renderer refuses markup it does not understand. A heading style or a
+      # nested link that it cannot handle fails here, on the pull request that
+      # wrote it, rather than silently on the published page.
+      - name: Check the reference pages build
+        if: runner.os == 'Linux'
+        run: python3 tooling/site/build-docs.py
 
       - name: Configure
         run: cmake --preset ci

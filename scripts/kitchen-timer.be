@@ -6,21 +6,6 @@
 
 import string
 
-# A countdown that survives the carousel moving on.
-#
-# The deadline is one number on the device clock, not a counter ticked once
-# per frame, so the timer keeps running while the panel is showing the
-# weather - and comes back showing the right number rather than however many
-# frames it happened to get. That is the only design decision here that
-# matters, and it is the one a frame-counting version gets wrong in a way you
-# only notice after burning the dinner.
-#
-# It needs no wall clock. A duration is not a time of day, so this works on a
-# device that has never seen a network.
-#
-# Click to add a minute. Two seconds after the last click it starts. Click
-# while it runs to cancel, click while it shouts to shut it up.
-
 class App
   var mode         # 0 setting, 1 running, 2 finished
   var mins         # minutes dialled in
@@ -84,10 +69,7 @@ class App
 
   def _setting(now)
     if self.mins == 0
-      # Idle: a dim zero that breathes, so the card reads as a timer waiting
-      # rather than as a panel that has stopped. The 5x7 font advances six
-      # pixels, so "00:00" is 1 to 30 and "+1" is 38 to 49 - measured, not
-      # centred by eye, because anything past pixel 51 is clipped in silence.
+
       var pulse = (now / 8) % 250
       if pulse > 125
         pulse = 250 - pulse
@@ -135,9 +117,6 @@ class App
     end
     self._clock(1, 1, left, colour)
 
-    # The last ten seconds get a tick each, which is what makes you look up.
-    # Keyed to the second number rather than to elapsed time, so a skipped
-    # frame cannot double-tick or miss one.
     if left < 10 && left != self.spoke
       self.spoke = left
       if audio_known()
@@ -154,18 +133,12 @@ class App
   def _finished(now)
     var since = now - self.ends
 
-    # Sixty seconds of alarm, then it gives up and goes back to waiting.
-    # A timer that shouts until somebody comes home is a timer nobody leaves
-    # switched on.
     if since > 60000
       self.mode = 0
       self.mins = 0
       return
     end
 
-    # Half a second on, half a second off. The flash is the alarm on a
-    # device with no speaker, so it has to be the whole panel and not a
-    # polite little icon.
     var on = (since / 500) % 2 == 0
     if on
       clear(rgb(90, 0, 0))

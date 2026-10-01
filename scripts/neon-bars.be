@@ -34,9 +34,7 @@ class App
   var lit           # frames since anything was heard
 
   def init()
-    # Neon, and neon means the bar changes hue up its own height rather than
-    # every bar being one flat colour - the gradient is what makes 16 pixels
-    # of height read as brightness instead of as a bar chart.
+
     self.PAL = [
       [rgb(0, 40, 90), rgb(0, 120, 200), rgb(0, 200, 255), rgb(150, 255, 255)],
       [rgb(60, 0, 70), rgb(160, 0, 140), rgb(255, 40, 160), rgb(255, 180, 230)],
@@ -80,16 +78,10 @@ class App
 
     var now = now_ms()
 
-    # Twenty samples a second, which is what the MCU actually sends. Sampling
-    # faster would just redraw the same number and make the wall scroll at a
-    # speed that has nothing to do with the sound.
     if now - self.last >= 50
       self.last = now
       var v = mic_level()
 
-      # Shift left by one. Fifty-two moves a frame is nothing next to the
-      # drawing below, and a ring buffer here would cost an index that has to
-      # stay in step with two arrays.
       var i = 0
       while i < 51
         self.hist[i] = self.hist[i + 1]
@@ -106,9 +98,6 @@ class App
       end
     end
 
-    # Auto-gain. Rises instantly to fit a new loud sound - clipping the first
-    # beat of a track would be the one moment anybody is looking - and falls
-    # slowly, so a quiet passage does not ratchet the whole room up.
     var top = 0
     var i = 0
     while i < 52
@@ -126,9 +115,6 @@ class App
     var pal = self.PAL[self.pal]
     var h = 16
 
-    # A floor under every column, including the ones with nothing in them.
-    # Without it the panel is black until the wall has scrolled all the way
-    # across - two and a half seconds of a device that looks switched off.
     rect_fill(0, 15, 52, 1, rgb(6, 10, 16))
 
     i = 0
@@ -138,9 +124,6 @@ class App
         bar = h
       end
 
-      # Peak hold: the marker sits at the highest this column reached and
-      # sinks a pixel at a time. It is what lets you see a transient that was
-      # gone before your eye got there.
       if bar > self.peak[i]
         self.peak[i] = bar
       elif self.peak[i] > 0 && (i % 3) == (now / 120) % 3

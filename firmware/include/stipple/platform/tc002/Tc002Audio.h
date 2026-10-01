@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "stipple/audio/Melody.h"
-#include "stipple/audio/Tone.h"
+#include "stipple/audio/Sound.h"
 #include "stipple/platform/PlatformServices.h"
 
 namespace stipple {
@@ -99,7 +99,11 @@ private:
     int (*disableChn_)(int, int) = nullptr;
     int (*disable_)(int) = nullptr;
 
-    audio::ToneGenerator tone_{kSampleRate};
+    /// The catalogue and the sequencer both live in core. This adapter used
+    /// to carry an if-chain of named sounds, which meant the simulator had a
+    /// different list and "what does alert sound like" had two answers - see
+    /// audio/Sound.h.
+    audio::MelodyPlayer player_{kSampleRate};
     audio::MelodyGenerator melody_{kSampleRate};
     std::uint8_t volume_ = 153;  // 60%, matching the config default
 

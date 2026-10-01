@@ -333,6 +333,17 @@ private:
     /// The knob press, inside settings: toggles what can be toggled.
     void activateCurrentSetting();
 
+    /// Hand an action to the active script, if it has asked for the controls.
+    ///
+    /// True when the script took it, and the action must then not also do its
+    /// ordinary job - a press that both moved the paddle and advanced the
+    /// carousel would be worse than either.
+    ///
+    /// Only reached for a script declaring `# @input exclusive` (ADR 0024),
+    /// and never for Back or SettingsToggle: the middle button and a held
+    /// knob are how somebody leaves, and nothing may take them.
+    bool offerToScript(input::Action action);
+
     /// Re-parse the timezone rule when it changes, and say so in the log.
     void applyTimeSettings();
 

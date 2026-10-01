@@ -1,6 +1,6 @@
 # name: Dutch Trains
 # summary: NS trains passing by - VIRM, ICM, ICNG, SLT, FLIRT and more, in both directions.
-# author: Unknown (ported to TC002)
+# author: Stipple
 # tags: animation, trains, netherlands, ambient
 # panel: 52x16
 
@@ -24,9 +24,6 @@ class DutchTrains
 	self.pick()
   end
 
-  # --- offset drawing wrappers ------------------------------------------------
-  # Everything the train draws goes through these so the art stays written for a
-  # 0..7 vertical band while actually landing at OY..OY+7 on the taller panel.
   def px(x, y, c)
 	pixel(x, self.OY + y, c)
   end
@@ -80,31 +77,12 @@ class DutchTrains
 	end
   end
 
-
-  # =====================================
-  # WHEEL
-  # =====================================
-
   def wheel(x)
 	var c = 0x555555
 	if (now_ms() / 120) % 2 == 0 c = 0x999999 end
 	self.px(x + 2, 6, c)
 	self.px(x + 7, 6, c)
   end
-
-
-  # =====================================
-  # NORMAL CAR
-  #
-  # t:
-  # 0 VIRM
-  # 1 DDZ
-  # 2 ICM
-  # 3 ICNG
-  # 4 SNG
-  # 5 SLT
-  # 6 FLIRT
-  # =====================================
 
   def car(x)
 
@@ -132,7 +110,6 @@ class DutchTrains
 
 	  self.px(x + 5, 4, 0x0866A5)
 
-
 	# ICM / ICNG
 	elif self.t < 4
 
@@ -147,7 +124,6 @@ class DutchTrains
 	  self.px(x + 9, 4, 0x17394F)
 
 	  self.px(x + 5, 5, 0x0866A5)
-
 
 	# SPRINTER
 	else
@@ -175,14 +151,6 @@ class DutchTrains
 	self.wheel(x)
   end
 
-
-  # =====================================
-  # CAB
-  #
-  # left = cab faces left
-  # lead = leading end
-  # =====================================
-
   def cab(x, left, lead)
 
 	var dbl = self.t < 2
@@ -190,7 +158,6 @@ class DutchTrains
 	var body = 0xFFD500
 
 	if spr body = 0xEEEEEE end
-
 
 	# DOUBLE DECKER
 	if dbl
@@ -245,7 +212,6 @@ class DutchTrains
 	  self.px(x + 6, 5, 0x17394F)
 	  self.px(x + 8, 5, 0x17394F)
 
-
 	# SINGLE DECK
 	else
 
@@ -285,14 +251,12 @@ class DutchTrains
 
 	  end
 
-
 	  # ICM
 	  if self.t == 2
 
 		self.px(x + 4, 4, 0x17394F)
 		self.px(x + 6, 4, 0x17394F)
 		self.px(x + 8, 4, 0x17394F)
-
 
 	  # ICNG
 	  elif self.t == 3
@@ -301,7 +265,6 @@ class DutchTrains
 		self.px(x + 4, 4, 0x17394F)
 		self.px(x + 6, 4, 0x17394F)
 		self.px(x + 8, 4, 0x17394F)
-
 
 	  # SPRINTERS
 	  else
@@ -326,11 +289,6 @@ class DutchTrains
 	self.wheel(x)
   end
 
-
-  # =====================================
-  # COMPLETE TRAIN
-  # =====================================
-
   def train()
 
 	var p = self.x
@@ -350,11 +308,6 @@ class DutchTrains
 	self.cab(p, false, !leadleft)
 
   end
-
-
-  # =====================================
-  # BACKGROUND
-  # =====================================
 
   def world()
 
@@ -376,17 +329,11 @@ class DutchTrains
 
   end
 
-
-  # =====================================
-  # MAIN
-  # =====================================
-
   def draw()
 
 	var now = now_ms()
 
 	self.world()
-
 
 	# train passing
 	if self.st == 0
@@ -404,7 +351,6 @@ class DutchTrains
 	  end
 
 	  self.train()
-
 
 	  if self.dir == 1
 
@@ -424,7 +370,6 @@ class DutchTrains
 
 	  return
 	end
-
 
 	# empty track
 	if now - self.tm > 2500

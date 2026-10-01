@@ -190,6 +190,41 @@
         });
     }
 
+    // The sound catalogue, asked for rather than assumed.
+    //
+    // The dropdown used to be three <option> rows in the markup while the
+    // firmware had five sounds, and nothing anywhere would have noticed. The
+    // device is the only thing that knows what it can play, so it is the
+    // thing that gets asked - and a failure here leaves "Silent" in place
+    // rather than an empty select.
+    function loadSounds() {
+        return send('GET', '/api/v1/sound').then(function (catalogue) {
+            var select = $('notify-sound');
+            if (!select || !catalogue || !catalogue.sounds) { return; }
+
+            (catalogue.sounds || []).forEach(function (sound) {
+                var option = document.createElement('option');
+                option.value = sound.name;
+                // Capitalised for a person to read; the value stays the name
+                // the API takes.
+                option.textContent = sound.name.charAt(0).toUpperCase() +
+                                     sound.name.slice(1);
+                select.appendChild(option);
+            });
+
+            // The two requests race, and whichever loses has to fix up. If
+            // settings arrived first it applied a value whose <option> did
+            // not exist yet, and the select silently fell back to Silent -
+            // which reads as "somebody turned the sound off".
+            if (settings) {
+                writeControl(select, pathGet(settings, 'notifications.sound'));
+            }
+        }).catch(function () {
+            // A device with no speaker answers 404 here, and that is already
+            // said in one place by the capability check. Nothing to add.
+        });
+    }
+
     function loadSettings() {
         return send('GET', '/api/v1/settings').then(function (loaded) {
             settings = loaded;
@@ -753,6 +788,26 @@
             }
             if (can.reboot === false) {
                 $('reboot').disabled = true;
+            }
+
+            // Said before it is switched on, not after the broker goes quiet.
+            //
+            // Turning this on used to look exactly like a broker that had
+            // stopped answering: the device refuses the connection - which is
+            // right, plaintext would put the password on the wire - but a
+            // refusal and an unreachable broker are the same silence from
+            // here. ADR 0013 again: an absent capability has to be visible as
+            // absent.
+            if (can.mqttTls === false) {
+                var tls = $('mqtt-tls');
+                if (tls) {
+                    tls.disabled = true;
+                    tls.checked = false;
+                }
+                $('mqtt-tls-help').textContent =
+                    'This build cannot do MQTT over TLS, so the switch is off. ' +
+                    'The device carries TLS for scripts, but the broker ' +
+                    'transport does not use it yet.';
             }
         });
     }
@@ -1587,15 +1642,26 @@
     function describeFirmware(state) {
         var note = $('firmware-state');
         var back = $('firmware-rollback');
+        var restart = $('firmware-restart');
         if (!note) { return; }
 
         if (!state) {
             note.textContent = 'This build cannot install firmware.';
             if (back) { back.hidden = true; }
+            if (restart) { restart.hidden = true; }
             return;
         }
 
-        if (state.installedBytes > 0) {
+        if (state.restartPending) {
+            // The state this whole flag exists for. `version` is the process
+            // answering right now, and an installed file is not it yet -
+            // reporting only "an update is installed" left somebody watching
+            // for a change that cannot happen until the device restarts.
+            note.textContent = 'Version ' + state.version + ' is running. ' +
+                               'An update is installed (' +
+                               Math.round(state.installedBytes / 1024) + ' KB) ' +
+                               'and starts when you restart.';
+        } else if (state.installedBytes > 0) {
             note.textContent = 'Running an installed update (' +
                                Math.round(state.installedBytes / 1024) + ' KB). ' +
                                'Version ' + state.version + '.';
@@ -1607,6 +1673,24 @@
         }
 
         if (back) { back.hidden = !state.canRollBack; }
+        if (restart) { restart.hidden = !state.restartPending; }
+    }
+
+    function wireFirmwareRestart() {
+        var restart = $('firmware-restart');
+        if (!restart) { return; }
+        restart.addEventListener('click', function () {
+            if (!window.confirm('Restart now to start the installed update?')) {
+                return;
+            }
+            restart.disabled = true;
+            send('POST', '/api/v1/system/reboot')
+                .then(function () { toast('Restarting'); })
+                .catch(function (err) {
+                    restart.disabled = false;
+                    fail(err);
+                });
+        });
     }
 
     function loadFirmwareState() {
@@ -1619,17 +1703,21 @@
         var button = $('firmware-upload');
         var back = $('firmware-rollback');
 
+        wireFirmwareRestart();
+
         if (back) {
             back.addEventListener('click', function () {
                 var note = $('firmware-state');
                 back.disabled = true;
                 send('DELETE', '/api/v1/system/firmware')
                     .then(function (body) {
-                        if (note) {
-                            note.textContent = (body && body.note) ||
-                                               'Previous version restored.';
-                        }
-                        return loadFirmwareState();
+                        // Same reason as the install path: setting the note
+                        // here and reloading on the next line meant the
+                        // device's own sentence never survived to be read.
+                        return loadFirmwareState().then(function () {
+                            toast((body && body.note) ||
+                                  'Previous version restored.');
+                        });
                     })
                     .catch(function (err) {
                         if (note) {
@@ -1675,17 +1763,17 @@
                     return body;
                 });
             }).then(function (body) {
-                if (note) {
-                    // "Installed" is not "running", and the difference is a
-                    // reboot. Saying only the first would have somebody
-                    // looking for a change that has not happened yet.
-                    note.textContent = 'Installed ' + Math.round(body.bytes / 1024) +
-                                       ' KB. Restart to run it - if it will not ' +
-                                       'load, the device falls back to the version ' +
-                                       'flashed with it rather than to nothing.';
-                }
                 if (picker) { picker.value = ''; }
-                return loadFirmwareState();
+                // This used to set the message itself - "Installed N KB.
+                // Restart to run it" - and then call loadFirmwareState() on
+                // the next line, which immediately overwrote it with the
+                // steady-state sentence. The correct text was on screen for
+                // about a frame. The state line says it now, so reloading is
+                // the whole job.
+                return loadFirmwareState().then(function () {
+                    toast('Installed ' + Math.round(body.bytes / 1024) +
+                          ' KB. Restart to run it.');
+                });
             }).catch(function (err) {
                 // Shown as-is. The device writes these for a person: "that
                 // file is not built for ARM", "that file is not a shared
@@ -2263,6 +2351,103 @@
         });
     }
 
+    // --- what a script asked to be asked -------------------------------------
+    //
+    // `# @config` declarations, rendered as a small form. The values go to
+    // the script's own store, which is where its `store.get(key, fallback)`
+    // was already reading from - so a script works unchanged on a firmware
+    // that has never heard of settings, and gains a form on one that has.
+
+    function renderScriptSettings(entry) {
+        var box = $('script-settings');
+        var fields = $('script-settings-fields');
+        if (!box || !fields) { return; }
+
+        fields.textContent = '';
+        var list = (entry && entry.settings) || [];
+        // Most scripts declare nothing, and an empty "Settings" heading is
+        // furniture that means "this is broken".
+        box.hidden = list.length === 0;
+        if (!list.length) { return; }
+
+        list.forEach(function (setting) {
+            var field = document.createElement('div');
+            field.className = 'field';
+
+            var id = 'set-' + setting.key;
+            var input;
+
+            if (setting.type === 'boolean') {
+                var wrap = document.createElement('label');
+                wrap.className = 'check';
+                input = document.createElement('input');
+                input.type = 'checkbox';
+                input.id = id;
+                // An unset boolean falls back to what the declaration said,
+                // which is what the script would have read anyway.
+                input.checked = (setting.value !== '' ? setting.value : setting['default']) === 'true';
+                wrap.appendChild(input);
+                wrap.appendChild(document.createTextNode(' ' + setting.label));
+                field.appendChild(wrap);
+            } else {
+                var label = document.createElement('label');
+                label.setAttribute('for', id);
+                label.textContent = setting.label;
+                field.appendChild(label);
+
+                input = document.createElement('input');
+                input.id = id;
+                input.type = setting.type === 'number' ? 'number' : 'text';
+                input.value = setting.value;
+                // The declared default as the placeholder, so an empty box
+                // still shows what the script will use.
+                if (setting['default']) { input.placeholder = setting['default']; }
+                if (setting.maxLength) { input.maxLength = setting.maxLength; }
+                if (setting.minimum !== undefined) { input.min = setting.minimum; }
+                if (setting.maximum !== undefined) { input.max = setting.maximum; }
+                input.spellcheck = false;
+                input.autocomplete = 'off';
+                field.appendChild(input);
+            }
+
+            if (setting.help) {
+                var help = document.createElement('p');
+                help.className = 'help';
+                help.textContent = setting.help;
+                field.appendChild(help);
+            }
+
+            // Saved on change rather than on a button. There is no draft
+            // state worth having for one field, and a Save button beside the
+            // source's Save button is two things that look like the same
+            // thing and are not.
+            input.addEventListener('change', function () {
+                var value = setting.type === 'boolean' ? input.checked : input.value;
+                saveScriptSetting(entry.id, setting.key, value, input);
+            });
+
+            fields.appendChild(field);
+        });
+    }
+
+    function saveScriptSetting(id, key, value, input) {
+        var body = { settings: {} };
+        body.settings[key] = value;
+
+        send('PATCH', '/api/v1/scripts/' + encodeURIComponent(id), body)
+            .then(function () {
+                input.classList.remove('bad');
+                toast('Saved');
+            })
+            .catch(function (error) {
+                // Marked on the field rather than only in a toast: by the
+                // time somebody reads a message at the bottom of the page
+                // they have forgotten which box it was about.
+                input.classList.add('bad');
+                fail(error);
+            });
+    }
+
     // entry is null for a script that does not exist yet.
     function openScript(entry) {
         editingId = entry ? entry.id : null;
@@ -2275,6 +2460,7 @@
         $('script-source').value = entry ? (entry.source || '') : SCRIPT_TEMPLATE;
         scriptDirty = !entry;
         showProblem(entry ? entry.problem : '');
+        renderScriptSettings(entry);
         updateScriptBytes();
         paintScript();
         highlightSelectedScript();
@@ -3210,9 +3396,31 @@
             var input = $(id);
             if (input) { input.addEventListener('change', refreshMeridiem); }
         });
+
+        // Hearing it is the only way to choose one. Picking a notification
+        // sound from a dropdown and then waiting for a notification to find
+        // out what you picked is not a choice, it is a guess.
+        var soundTest = $('notify-sound-test');
+        if (soundTest) {
+            soundTest.addEventListener('click', function () {
+                var chosen = $('notify-sound').value;
+                if (chosen === 'none') {
+                    // Silence is a real answer, so say so rather than posting
+                    // a name the API would refuse.
+                    $('notify-sound-help').textContent =
+                        'Silent: nothing is played when a notification arrives.';
+                    return;
+                }
+                send('POST', '/api/v1/sound', { sound: chosen }).catch(function () {
+                    $('notify-sound-help').textContent =
+                        'Could not play it - the device did not answer.';
+                });
+            });
+        }
+
         showPanel('panel-display');
 
-        Promise.all([loadSettings(), loadDevice()])
+        Promise.all([loadSettings(), loadDevice(), loadSounds()])
             .then(function () {
                 // A device nobody has set up opens on the step that matters
                 // rather than on a live view of a clock showing the wrong

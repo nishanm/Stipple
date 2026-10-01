@@ -26,15 +26,19 @@
     <span class="bar__name">Stipple</span>
   </a>
   <nav class="bar__nav" aria-label="Main">
-    <a href="emulator/">Emulator</a>
     <a href="#install">Install</a>
-    <a href="shop/">Scripts</a>
+    <a href="shop/">Library</a>
+    <a href="scripting/">Scripting</a>
+    <a href="mqtt/">MQTT</a>
     <a href="api/">API</a>
     <a href="https://github.com/galadril/Stipple">Source</a>
   </nav>
 </header>
 
 <main id="main">
+
+  <img class="banner" src="banner.svg" width="624" height="192"
+       alt="Stipple, spelled out in lit pixels on a 52 by 16 LED panel">
 
   <!-- The hero is the product, at the size you can count the pixels.
        The panel draws the name because that is literally what the device
@@ -60,8 +64,8 @@
         your own network, and talks to nothing else.
       </p>
       <p class="actions">
-        <a class="button button--lit" href="emulator/">Try it in your browser</a>
-        <a class="button" href="#install">Put it on a device</a>
+        <a class="button button--lit" href="#install">Put it on a device</a>
+        <a class="button" href="shop/">Browse the scripts</a>
       </p>
       <p class="fineprint">
         GPL-3.0. No cloud, no account, no telemetry. Everything above runs on
@@ -72,20 +76,21 @@
            parts have met hardware and which have not is both more useful and
            more credible than a vague warning. -->
       <p class="prerelease">
-        <strong>0.1.0, pre-release.</strong> Everything described here has run
-        on real hardware — but not this exact build. The project was renamed
-        after the last device deployment, and the firmware-update endpoint has
-        not yet been exercised end to end.
+        <strong>Pre-release.</strong> Everything described here has run on
+        real hardware. The firmware-update endpoint has not yet been exercised
+        end to end, and <code>https</code> does not work on a TC002 &mdash; its
+        OpenSSL has every TLS version compiled out. Plain <code>http</code> on
+        your own network is fine.
       </p>
     </div>
   </section>
 
   <section class="band" id="what">
-    <h2>Every frame on this page came off the real renderer</h2>
+    <h2>The apps it ships with</h2>
     <p>
-      They are the golden-image fixtures the test suite compares against, so
-      each one is output the firmware actually produced and CI still checks.
-      If a frame here looked wrong, a test would be failing.
+      Every animation on this page came off the real renderer, frame by
+      frame, at the real 52&nbsp;&times;&nbsp;16 size. More in the
+      <a href="shop/">script library</a>.
     </p>
   </section>
 
@@ -106,14 +111,14 @@
       <div><dt>Frame budget</dt><dd>dirty rendering, nothing allocates while drawing</dd></div>
       <div><dt>Memory</dt><dd>bounded queues, bounded uploads, bounded icon storage</dd></div>
       <div><dt>Dependencies</dt><dd>none — JSON, PNG, MQTT and the tests are all in-tree</dd></div>
-      <div><dt>Tests</dt><dd>905, including pixel-exact comparison of rendered frames</dd></div>
+      <dd>over a thousand, including pixel-exact comparison of rendered frames</dd>
     </dl>
   </section>
 
   <section class="band" id="api">
     <h2>One API, and it is yours</h2>
     <p>
-      Everything the web page can do, you can do: 21 routes over HTTP, the
+      23 routes over HTTP
       same router answering MQTT so the two cannot drift. Apps are pushed to
       the device — it never reaches out, which is why it works with no
       internet at all.
