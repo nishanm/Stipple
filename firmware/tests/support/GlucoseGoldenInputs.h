@@ -68,7 +68,7 @@ inline constexpr State kStates[kStateCount] = {
 
 inline constexpr int kFrameCount = 54;
 inline constexpr Frame kFrames[kFrameCount] = {
-    {"hero", "in-range", "glucose-hero--in-range", 171},
+    {"hero", "in-range", "glucose-hero--in-range", 174},
     {"hero", "warn-high", "glucose-hero--warn-high", 206},
     {"hero", "urgent-high", "glucose-hero--urgent-high", 204},
     {"hero", "warn-low", "glucose-hero--warn-low", 162},
@@ -77,7 +77,7 @@ inline constexpr Frame kFrames[kFrameCount] = {
     {"hero", "rising-45", "glucose-hero--rising-45", 175},
     {"hero", "falling-45", "glucose-hero--falling-45", 163},
     {"hero", "no-trend", "glucose-hero--no-trend", 156},
-    {"hero-delta", "in-range", "glucose-hero-delta--in-range", 171},
+    {"hero-delta", "in-range", "glucose-hero-delta--in-range", 174},
     {"hero-delta", "warn-high", "glucose-hero-delta--warn-high", 206},
     {"hero-delta", "urgent-high", "glucose-hero-delta--urgent-high", 200},
     {"hero-delta", "warn-low", "glucose-hero-delta--warn-low", 185},
@@ -95,7 +95,7 @@ inline constexpr Frame kFrames[kFrameCount] = {
     {"hero-graph", "rising-45", "glucose-hero-graph--rising-45", 175},
     {"hero-graph", "falling-45", "glucose-hero-graph--falling-45", 167},
     {"hero-graph", "no-trend", "glucose-hero-graph--no-trend", 169},
-    {"clock", "in-range", "glucose-clock--in-range", 180},
+    {"clock", "in-range", "glucose-clock--in-range", 183},
     {"clock", "warn-high", "glucose-clock--warn-high", 194},
     {"clock", "urgent-high", "glucose-clock--urgent-high", 195},
     {"clock", "warn-low", "glucose-clock--warn-low", 166},

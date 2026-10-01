@@ -94,9 +94,12 @@ void trendMark(Canvas& canvas, int x, int y, Trend trend, Rgb color, int w, int 
     const int mid = y + h / 2;
 
     if (slope == 0) {
-        fill(canvas, x, mid - 1, w - 3, 2, color);  // shaft
-        for (int i = 0; i < 3; ++i) {               // head, 5 -> 1 tall
-            fill(canvas, x + w - 3 + i, mid - 2 + i, 1, 5 - 2 * i, color);
+        fill(canvas, x, mid - 1, w - 3, 2, color);  // shaft, rows mid-1..mid
+        // Head 6 -> 4 -> 2 tall, centred on the 2-row shaft so the tip carries
+        // it on. The old 5 -> 1 head sat a row low and read as a bent arrow on
+        // the panel (owner, 2026-09-30); Track A changed in the same step.
+        for (int i = 0; i < 3; ++i) {
+            fill(canvas, x + w - 3 + i, mid - 3 + i, 1, 6 - 2 * i, color);
         }
         return;
     }
