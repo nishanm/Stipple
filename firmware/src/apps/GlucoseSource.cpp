@@ -157,6 +157,14 @@ void GlucoseSource::configure(const SourceSettings& settings, int pollSeconds) {
                              settings.username == settings_.username &&
                              settings.region == settings_.region &&
                              settings.patientId == settings_.patientId;
+    // A request in flight was asked under the old settings; its answer must
+    // not land under the new ones - another site's, or another person's,
+    // reading shown as this one's.
+    if (running_ && client_ != nullptr) {
+        client_->reset();
+    }
+    running_ = false;
+    step_ = Step::None;
     settings_ = settings;
     url_ = settings_.kind == SourceKind::Nightscout && !settings_.url.empty()
                ? entriesUrl(settings_.url)
@@ -349,9 +357,11 @@ void GlucoseSource::start(std::uint64_t nowMillis) {
             headers[count++] = {"Cookie", medtrumCookie_};
             break;
         case Step::MedtrumHistory: {
-            const std::int64_t backfill = nowUnix_ - kDexcomMinutes * 60;
-            const std::int64_t from = newestEpoch() > backfill ? newestEpoch() + 1 : backfill;
-            lastUrl_ = medtrumHistoryUrl(from, nowUnix_, medtrumUser_);
+            // An hour a request, as nightscout-clock asks: the service limits
+            // how much one answer carries.
+            const std::int64_t to =
+                medtrumFrom_ + 3600 < nowUnix_ ? medtrumFrom_ + 3600 : nowUnix_;
+            lastUrl_ = medtrumHistoryUrl(medtrumFrom_, to, medtrumUser_);
             medtrumHeaders();
             headers[count++] = {"Cookie", medtrumCookie_};
             break;
@@ -652,7 +662,8 @@ GlucoseSource::Outcome GlucoseSource::answerLibre(int httpStatus, std::string_vi
                 out.next = Step::LibreGraph;
                 return out;
             }
-            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, pendingCurrent_);
+            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, pendingCurrent_,
+                                       kCloudSampleSpacingSeconds);
             out.kind = Outcome::Kind::Samples;
             out.count = sampleCount_;
             return out;
@@ -665,10 +676,12 @@ GlucoseSource::Outcome GlucoseSource::answerLibre(int httpStatus, std::string_vi
             // A graph that will not read still leaves the latest reading.
             if (count > 0) {
                 for (int i = 0; i < count; ++i) {
-                    sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, incoming_[i]);
+                    sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, incoming_[i],
+                                               kCloudSampleSpacingSeconds);
                 }
             }
-            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, pendingCurrent_);
+            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, pendingCurrent_,
+                                       kCloudSampleSpacingSeconds);
             out.kind = Outcome::Kind::Samples;
             out.count = sampleCount_;
             return out;
@@ -710,7 +723,10 @@ GlucoseSource::Outcome GlucoseSource::answerMedtrum(int httpStatus, std::string_
                 return out;
             }
             if (cookies.empty()) {
+                // Held off like a refusal: logging in again every minute would
+                // be the hammering the hold exists to prevent.
                 out.reason = "no session cookie";
+                out.fatal = true;
                 return out;
             }
             medtrumCookie_.assign(cookies);
@@ -721,6 +737,12 @@ GlucoseSource::Outcome GlucoseSource::answerMedtrum(int httpStatus, std::string_
             Sample current;
             std::string user;
             if (!parseMedtrumMonitor(body, current, user, tokens_, kTokenCapacity)) {
+                // An OK answer with nothing in it is a sensor warming up or
+                // expired, not a session problem: no login for that.
+                if (medtrumOk(body, tokens_, kTokenCapacity)) {
+                    out.reason = "no data";
+                    return out;
+                }
                 // An expired session answers 200 with res != OK: log in once.
                 if (!renewedThisPoll_) {
                     renewedThisPoll_ = true;
@@ -735,11 +757,14 @@ GlucoseSource::Outcome GlucoseSource::answerMedtrum(int httpStatus, std::string_
             medtrumUser_ = user;
             pendingCurrent_ = current;
             if (newestEpoch() < current.epoch - 6 * 60) {
+                const std::int64_t backfill = nowUnix_ - kDexcomMinutes * 60;
+                medtrumFrom_ = newestEpoch() > backfill ? newestEpoch() + 1 : backfill;
                 out.kind = Outcome::Kind::Next;
                 out.next = Step::MedtrumHistory;
                 return out;
             }
-            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, current);
+            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, current,
+                                       kCloudSampleSpacingSeconds);
             out.kind = Outcome::Kind::Samples;
             out.count = sampleCount_;
             return out;
@@ -748,9 +773,18 @@ GlucoseSource::Outcome GlucoseSource::answerMedtrum(int httpStatus, std::string_
             const int count =
                 parseMedtrumHistory(body, incoming_, kMaxHistory, tokens_, kTokenCapacity);
             for (int i = 0; i < count; ++i) {
-                sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, incoming_[i]);
+                sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, incoming_[i],
+                                           kCloudSampleSpacingSeconds);
             }
-            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, pendingCurrent_);
+            // The next hour, while there is one and steps are left.
+            medtrumFrom_ += 3601;
+            if (count >= 0 && medtrumFrom_ < nowUnix_ && stepsThisPoll_ < kMaxStepsPerPoll) {
+                out.kind = Outcome::Kind::Next;
+                out.next = Step::MedtrumHistory;
+                return out;
+            }
+            sampleCount_ = mergeSample(samples_, sampleCount_, kMaxHistory, pendingCurrent_,
+                                       kCloudSampleSpacingSeconds);
             out.kind = Outcome::Kind::Samples;
             out.count = sampleCount_;
             return out;

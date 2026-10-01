@@ -427,10 +427,13 @@ STIPPLE_TEST(GlucoseCloud, MedtrumLogsInWithACookieReadsAndFillsTheGap) {
     STIPPLE_CHECK_EQ(rig.source.reading().sgv, 126);
     STIPPLE_CHECK(rig.source.reading().trend == Trend::FortyFiveUp);
     STIPPLE_CHECK_EQ(rig.source.status().sampleCount, 3);
-    STIPPLE_REQUIRE(rig.client.askedAllHeaders().size() == 3);
+    // Login, monitor, then three hours of history an hour at a time.
+    STIPPLE_REQUIRE(rig.client.askedAllHeaders().size() == 5);
     STIPPLE_CHECK(has(rig.client.askedAllHeaders()[1], "Cookie: JSESSIONID=abc123"));
     STIPPLE_CHECK(has(rig.client.askedAllHeaders()[0], "User-Agent: okhttp/3.5.0"));
     STIPPLE_CHECK(has(rig.client.asked()[2], "user_name=sam_m"));
+    STIPPLE_CHECK(has(rig.client.asked()[2], "&st=2026-09-27%2009:00:01&et=2026-09-27%2010:00:01"));
+    STIPPLE_CHECK(has(rig.client.asked()[4], "&st=2026-09-27%2011:00:03"));
 }
 
 STIPPLE_TEST(GlucoseCloud, MedtrumRefusedLoginIsHeldOff) {
@@ -480,4 +483,52 @@ STIPPLE_TEST(GlucoseCloud, AnIncompleteLoginIsNotConfigured) {
     s.region = "ZZ";
     source.configure(s, 60);
     STIPPLE_CHECK_FALSE(source.configured());
+}
+
+// --- what review found -------------------------------------------------------------
+
+STIPPLE_TEST(GlucoseCloud, AChangeOfSourceDropsTheAnswerStillInFlight) {
+    // Site A asked, the owner switches to site B before A answers: A's
+    // reading must never be shown as B's.
+    Rig rig;
+    SimulatorHttpClient::Route slow;
+    slow.url = "http://a.example/api/v1/entries.json?count=38&find[type]=sgv";
+    slow.body = R"([{"sgv":250,"date":1790510340000,"direction":"Flat"}])";
+    slow.latencyMillis = 5000;
+    rig.client.answer(slow);
+    rig.source.configure("http://a.example", "", 60);
+    rig.run(1000);  // A's request is in flight
+    rig.source.configure("http://b.example", "", 60);
+    rig.run(8000);
+    STIPPLE_CHECK(rig.source.reading().sgv != 250);
+}
+
+STIPPLE_TEST(GlucoseCloud, ANamedPatientWhoIsNoLongerFollowedIsNotReplaced) {
+    LibreConnections connections;
+    STIPPLE_REQUIRE(cloud::parseLibreConnections(lluConnections("9/27/2026 12:00:00 PM", 140, 4),
+                                                 "p-gone", connections, tokens, 4096));
+    STIPPLE_CHECK_EQ(connections.chosen, -1);
+}
+
+STIPPLE_TEST(GlucoseCloud, AnEmptyMedtrumAnswerIsNoDataNotAReLogin) {
+    Rig rig;
+    rig.serve(std::string(cloud::kMedtrumLoginUrl), R"({"res":"OK"})", 200, "JSESSIONID=abc123");
+    rig.serve(std::string(cloud::kMedtrumMonitorUrl), R"({"res":"OK","monitorlist":[]})");
+    rig.source.configure(medtrum(), 60);
+    rig.run(2000);
+    rig.run(61000);
+    STIPPLE_CHECK_EQ(rig.asked(std::string(cloud::kMedtrumLoginUrl)), 1);
+    STIPPLE_CHECK_EQ(std::string(rig.source.status().lastFailure), std::string("no data"));
+}
+
+STIPPLE_TEST(GlucoseCloud, MinuteReadingsAreThinnedSoTheHistorySpansHours) {
+    Sample s[64];
+    int n = 0;
+    for (int minute = 0; minute < 180; ++minute) {
+        n = cloud::mergeSample(s, n, 64, Sample{kNow + minute * 60, 100 + minute % 7, Trend::Flat},
+                               cloud::kCloudSampleSpacingSeconds);
+    }
+    STIPPLE_CHECK(n < 64);
+    STIPPLE_CHECK(s[n - 1].epoch - s[0].epoch >= 170 * 60);  // three hours, not one
+    STIPPLE_CHECK_EQ(s[n - 1].epoch, kNow + 179 * 60);       // and always the latest
 }

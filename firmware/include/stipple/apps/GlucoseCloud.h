@@ -43,7 +43,16 @@ std::string formEncoded(std::string_view text);
 /// one within 30 seconds of a sample already held as the same reading - a
 /// service polled every minute answers with the same reading five times. The
 /// newer copy wins, so a trend that arrives late is kept. Returns the count.
-int mergeSample(Sample* samples, int count, int capacity, const Sample& sample) noexcept;
+///
+/// `spacingSeconds` thins a service that reports every minute: a sample newer
+/// than the newest held by less than that replaces it rather than joining it,
+/// so 64 samples still span hours rather than one hour of minutes.
+int mergeSample(Sample* samples, int count, int capacity, const Sample& sample,
+                std::int64_t spacingSeconds = 30) noexcept;
+
+/// The spacing the minute-by-minute services are thinned to: a little under
+/// the five minutes the faces and the delta rule were written for.
+inline constexpr std::int64_t kCloudSampleSpacingSeconds = 240;
 
 // --- Dexcom Share -------------------------------------------------------------
 

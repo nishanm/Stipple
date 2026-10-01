@@ -304,6 +304,12 @@
                     if (next.length === 0) { toast('At least one face has to stay in use', true); return; }
                     set('glucose.faces', next);
                     if (!next.includes(get('glucose.face'))) { set('glucose.face', next[0]); }
+                    // A schedule row on a face no longer in use would make the
+                    // device refuse the whole save; it moves to a face that is.
+                    const rows = clone(get('glucose.schedule.rows') || []);
+                    if (rows.some((r) => !next.includes(r.face))) {
+                        set('glucose.schedule.rows', rows.map((r) => (next.includes(r.face) ? r : { ...r, face: next[0] })));
+                    }
                     if (next.length < 2 && get('glucose.cycleSeconds') > 0) { set('glucose.cycleSeconds', 0); }
                     render();
                 },

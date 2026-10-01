@@ -261,6 +261,8 @@ private:
     std::string libreRegion_;
     std::string medtrumCookie_;
     std::string medtrumUser_;
+    /// Where the next hour of Medtrum history starts.
+    std::int64_t medtrumFrom_ = 0;
 
     Sample samples_[kMaxHistory] = {};
     int sampleCount_ = 0;

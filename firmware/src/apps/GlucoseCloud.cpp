@@ -169,8 +169,18 @@ std::string formEncoded(std::string_view text) {
     return out;
 }
 
-int mergeSample(Sample* samples, int count, int capacity, const Sample& sample) noexcept {
+int mergeSample(Sample* samples, int count, int capacity, const Sample& sample,
+                std::int64_t spacingSeconds) noexcept {
     if (capacity <= 0 || !plausible(sample.sgv) || sample.epoch <= 0) {
+        return count;
+    }
+    // Newer than the newest, but too close to it: it replaces the newest, so
+    // the latest value is always shown and the history stays spaced.
+    if (count > 1 && sample.epoch > samples[count - 1].epoch &&
+        sample.epoch - samples[count - 2].epoch < spacingSeconds) {
+        const Trend trend = sample.trend == Trend::None ? samples[count - 1].trend : sample.trend;
+        samples[count - 1] = sample;
+        samples[count - 1].trend = trend;
         return count;
     }
     for (int i = 0; i < count; ++i) {
@@ -517,16 +527,27 @@ bool parseLibreConnections(std::string_view body, std::string_view wantedId,
             copyTo(patient.name, name);
         }
     }
-    if (wanted < 0 && data.size() == 1) {
+    // The only person followed, but only when nobody was named: a named person
+    // who is no longer followed is not silently replaced by somebody else.
+    if (wanted < 0 && wantedId.empty() && data.size() == 1) {
         wanted = 0;
     }
     if (wanted >= 0) {
         out.chosen = wanted < kMaxLibrePatients ? wanted : -1;
         out.current = libreMeasurement(data[wanted]["glucoseMeasurement"]);
         if (out.chosen < 0) {
-            // Followed, but past the four kept for the picker: still read it.
+            // Followed, but past the four kept for the picker: still read it,
+            // and name it properly in the last slot.
             out.chosen = kMaxLibrePatients - 1;
-            copyTo(out.patients[out.chosen].id, data[wanted]["patientId"].raw());
+            const json::Value person = data[wanted];
+            copyTo(out.patients[out.chosen].id, person["patientId"].raw());
+            std::string name = person["firstName"].toString();
+            const std::string last = person["lastName"].toString();
+            if (!last.empty()) {
+                name += ' ';
+                name += last;
+            }
+            copyTo(out.patients[out.chosen].name, name);
         }
     }
     return true;

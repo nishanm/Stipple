@@ -779,6 +779,16 @@ void Tc002Network::poll(std::uint64_t nowMillis) {
                 }
             }
             if (dhcp_ != nullptr && dhcp_->bound()) {
+                // SELECT_NETWORK disabled every other network to force this
+                // one; saved like that, the remembered fallbacks would be
+                // written `disabled=1` and never used again. Re-enable them -
+                // their lower priority keeps the device where it is.
+                for (const wpa::ListedNetwork& other :
+                     wpa::parseListNetworks(control_.ask("LIST_NETWORKS"))) {
+                    if (!other.current) {
+                        control_.ask("ENABLE_NETWORK " + std::to_string(other.id));
+                    }
+                }
                 control_.ask("SAVE_CONFIG");
                 addedNetworkId_ = -1;  // kept on purpose; nothing left to undo
                 stage_ = Stage::Done;
