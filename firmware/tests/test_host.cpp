@@ -937,7 +937,10 @@ STIPPLE_TEST(Host, ServesTheConfigurationUi) {
     const stipple::api::Response response = host.handle(request);
     STIPPLE_CHECK_EQ(response.status, 200);
     STIPPLE_CHECK(response.contentType.find("text/html") != std::string::npos);
-    STIPPLE_CHECK(response.body.find("STIPPLE") != std::string::npos);
+    // The front door is the glucose page; the full Stipple page is behind it.
+    STIPPLE_CHECK(response.body.find("Glucose clock") != std::string::npos);
+    request.path = "/advanced.html";
+    STIPPLE_CHECK(host.handle(request).body.find("STIPPLE") != std::string::npos);
 }
 
 STIPPLE_TEST(Host, TheUiNeverShadowsTheApi) {

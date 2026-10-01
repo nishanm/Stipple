@@ -852,6 +852,20 @@ Response ApiServer::handleDiagnostics(const Request& request, std::uint64_t nowM
             .member("holdSeconds", holdSeconds)
             .member("source", apps::glucose::sourceKindName(context_.glucose->kind()))
             .member("region", std::string(status.region));
+        // The reading itself, for the settings page's header. The panel shows
+        // it anyway, so this says nothing a person in the room cannot see.
+        {
+            const apps::glucose::Reading& reading = context_.glucose->reading();
+            writer.key("reading").beginObject()
+                .member("present", reading.historyCount > 0)
+                .member("sgv", reading.sgv)
+                .member("trend", apps::glucose::trendName(reading.trendShown()))
+                .member("minutesAgo", reading.minutesAgo)
+                .member("stale", reading.stale())
+                .member("hasDelta", reading.hasDelta)
+                .member("delta", reading.delta)
+                .endObject();
+        }
         // Who a LibreLinkUp account follows, for the settings page's picker.
         // Names the account holder chose to share with this follower login.
         writer.key("patients").beginArray();

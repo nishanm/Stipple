@@ -84,7 +84,7 @@ STIPPLE_TEST(WebAssets, TheEmbeddedPageSurvivedGeneration) {
     // The generator writes raw string literals. A mangled escape or a delimiter
     // clash would corrupt the content while still compiling, so check for
     // landmarks from each end of the real files.
-    const Asset* page = findAsset("/index.html");
+    const Asset* page = findAsset("/advanced.html");
     const std::string_view html = page->body;
     STIPPLE_CHECK(html.find("<!DOCTYPE html>") != std::string_view::npos);
     STIPPLE_CHECK(html.find("data-setting=\"clock.theme\"") != std::string_view::npos);
@@ -265,7 +265,7 @@ STIPPLE_TEST(WebAssets, TheIconManagerIsWiredToTheElementsItNeeds) {
     // The script looks these up by id and returns quietly if any is missing,
     // which is the right behaviour at runtime and a silent failure here: the
     // section would simply never appear, and nothing would say why.
-    const Asset* page = findAsset("/index.html");
+    const Asset* page = findAsset("/advanced.html");
     STIPPLE_REQUIRE(page != nullptr);
     const std::string html(page->body);
 
@@ -288,4 +288,39 @@ STIPPLE_TEST(WebAssets, TheIconManagerIsWiredToTheElementsItNeeds) {
     STIPPLE_CHECK(js.find("/api/v1/assets") != std::string::npos);
     STIPPLE_CHECK(js.find("wireIcons") != std::string::npos);
     STIPPLE_CHECK(js.find("loadIcons") != std::string::npos);
+}
+
+// --- the glucose page at the front door -----------------------------------------
+
+STIPPLE_TEST(WebAssets, TheFrontPageIsTheGlucoseClocksFourTabs) {
+    const Asset* page = findAsset("/index.html");
+    STIPPLE_REQUIRE(page != nullptr);
+    const std::string html(page->body);
+    for (const char* tab : {"data-tab=\"display\"", "data-tab=\"glucose\"", "data-tab=\"alarms\"",
+                            "data-tab=\"system\""}) {
+        STIPPLE_CHECK(html.find(tab) != std::string::npos);
+    }
+    STIPPLE_CHECK(html.find("/glucose.js") != std::string::npos);
+    STIPPLE_CHECK(html.find("/glucose.css") != std::string::npos);
+    STIPPLE_CHECK(html.find("rel=\"icon\"") != std::string::npos);
+    STIPPLE_CHECK(findAsset("/glucose.js") != nullptr);
+    STIPPLE_CHECK(findAsset("/glucose.css") != nullptr);
+    // Everything else is still one link away.
+    STIPPLE_CHECK(findAsset("/advanced.html") != nullptr);
+    STIPPLE_CHECK(std::string(findAsset("/glucose.js")->body).find("/advanced.html") != std::string::npos);
+    STIPPLE_CHECK(std::string(findAsset("/advanced.html")->body).find("href=\"/\"") != std::string::npos);
+}
+
+STIPPLE_TEST(WebAssets, TheGlucosePageOnlyTalksToTheVersionedApi) {
+    const std::string script(findAsset("/glucose.js")->body);
+    std::size_t at = 0;
+    int checked = 0;
+    while ((at = script.find("'/api", at)) != std::string::npos) {
+        STIPPLE_CHECK(script.compare(at, 9, "'/api/v1/") == 0);
+        ++checked;
+        at += 5;
+    }
+    STIPPLE_CHECK(checked > 5);
+    // The emulator's bridge, like the advanced page.
+    STIPPLE_CHECK(script.find("STIPPLE_BRIDGE") != std::string::npos);
 }

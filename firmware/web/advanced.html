@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STIPPLE - advanced</title>
+<link rel="stylesheet" href="/app.css">
+<!-- Declared, so the browser stops asking for /favicon.ico. A browser that is
+     not told where the icon is guesses that path and logs a 404 on the device
+     every time somebody opens this page. -->
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<header class="topbar">
+    <!-- The same mark and the same wordmark as the website, so the page you
+         read before buying and the page you configure with afterwards are
+         recognisably one product. -->
+    <span class="brandmark" aria-hidden="true"></span>
+    <h1>Stipple</h1>
+    <div class="identity">
+        <span id="device-name">&hellip;</span>
+        <span class="muted" id="device-version"></span>
+    </div>
+    <!-- Its own page rather than a tab: this one is read at a desk, that one
+         is held sideways in two hands. Sharing a layout would spoil both. -->
+    <!-- The glucose settings page is the front door; this one is everything
+         else Stipple can do, kept whole for the times it is needed. -->
+    <a class="pill" href="/" id="glucose-link" title="Back to the glucose settings">Glucose settings</a>
+    <a class="pill" href="gamepad.html" id="gamepad-link" title="Use a phone as a controller">Controller</a>
+    <span class="pill" id="connection">connecting</span>
+</header>
+
+<nav class="tabs" role="tablist">
+    <button class="tab" data-panel="panel-display" role="tab" type="button">Display</button>
+    <button class="tab" data-panel="panel-apps" role="tab" type="button">Apps</button>
+    <button class="tab" data-panel="panel-icons" role="tab" type="button">Icons</button>
+    <button class="tab" data-panel="panel-scripts" role="tab" type="button">Scripts</button>
+    <button class="tab" data-panel="panel-notify" role="tab" type="button">Notify</button>
+    <button class="tab" data-panel="panel-mqtt" role="tab" type="button">MQTT</button>
+    <button class="tab" data-panel="panel-system" role="tab" type="button">System</button>
+    <button class="tab" data-panel="panel-logs" role="tab" type="button">Logs</button>
+</nav>
+
+<main>
+
+<section class="panel" id="panel-display">
+    <h2>Live view</h2>
+    <div class="field">
+        <!-- Drawn at 10x with a 1px gap per pixel, so this reads as a matrix of
+             discrete LEDs rather than a smeared 52x16 image. The canvas is
+             sized in device pixels; app.js owns the geometry. -->
+        <canvas id="live" class="live" aria-label="Live view of the panel"></canvas>
+        <div class="live-bar">
+            <span class="help" id="live-status">connecting&hellip;</span>
+            <span class="grow"></span>
+            <button class="btn" id="live-shot" type="button"
+                    title="Save the current frame as a PNG">Screenshot</button>
+            <button class="btn" id="live-rec" type="button"
+                    title="Record the panel to an animated view">Record</button>
+        </div>
+
+        <!-- Under the panel and the same width as it, so the readings read as
+             belonging to the thing above them rather than as a separate
+             section. One row: these are glanced at together, and a wrapped
+             grid made the eye hunt. Everything here is polled state, so each
+             tile says when it does not know rather than showing a plausible
+             zero. -->
+        <div class="tiles" id="status-tiles"></div>
+    </div>
+
+    <h2>Controls</h2>
+    <div class="field">
+        <!-- These reach the firmware through the same mapper as the physical
+             controls, so a tap and a hold mean here exactly what they mean on
+             the case. -->
+        <div class="pad">
+            <button class="btn btn-hw" data-control="left" type="button"
+                    title="Move back: previous app, or previous setting">&#8634;</button>
+            <button class="btn btn-hw" data-control="minus" type="button"
+                    title="Turn it down: brightness, or whatever setting is open">&minus;</button>
+            <button class="btn btn-hw" data-control="press" type="button"
+                    title="Tap: act on it. Hold: open or close settings.">Knob</button>
+            <button class="btn btn-hw" data-control="middle" type="button"
+                    title="Back: leave settings, dismiss a notification, or return to the clock">M</button>
+            <button class="btn btn-hw" data-control="plus" type="button"
+                    title="Turn it up: brightness, or whatever setting is open">+</button>
+            <button class="btn btn-hw" data-control="right" type="button"
+                    title="Move on: next app, or next setting">&#8635;</button>
+        </div>
+        <p class="help">
+            Each control means one thing everywhere: <strong>turn</strong> to move
+            between things, <strong>press</strong> to act on one,
+            <strong>&minus; / +</strong> to change its value, <strong>M</strong> to go
+            back, and <strong>hold the knob</strong> for settings on the panel
+            itself. Click for a tap; press and hold for a long press.
+        </p>
+    </div>
+
+    <h2>Display</h2>
+    <div class="field">
+        <label for="power">Panel</label>
+        <label class="switch">
+            <input type="checkbox" id="power" data-setting="display.power">
+            <span>On</span>
+        </label>
+        <p class="help">Off blanks the panel without cutting power to the device.</p>
+    </div>
+    <div class="field">
+        <label for="brightness">Brightness</label>
+        <input type="range" id="brightness" min="0" max="255" data-setting="display.brightness">
+        <output for="brightness" id="brightness-out">128</output>
+        <p class="help">
+            This device has no ambient light sensor, so there is no automatic mode.
+        </p>
+    </div>
+    <div class="field">
+        <label for="overlay">Overlay</label>
+        <select id="overlay" data-setting="display.overlay">
+            <option value="none">None</option>
+            <optgroup label="Weather">
+                <option value="rain">Rain</option>
+                <option value="snow">Snow</option>
+                <option value="storm">Storm</option>
+                <option value="frost">Frost</option>
+                <option value="fog">Fog</option>
+                <option value="stars">Stars</option>
+            </optgroup>
+            <optgroup label="Occasion">
+                <option value="sparkle">Sparkle</option>
+                <option value="confetti">Confetti</option>
+            </optgroup>
+        </select>
+        <p class="help">
+            Drawn over whatever app is showing, and only on pixels it left
+            dark &mdash; so it never covers the time.
+        </p>
+    </div>
+
+    <h2>Overnight</h2>
+    <div class="field">
+        <label class="check">
+            <input type="checkbox" id="night-enabled" data-setting="display.night.enabled">
+            Dim on a schedule
+        </label>
+        <p class="help">
+            A panel bright enough to read across a kitchen is too bright to
+            sleep next to. Times are local, so the window follows the timezone.
+        </p>
+    </div>
+    <div class="row" id="night-fields">
+        <div class="field">
+            <label for="night-start">From</label>
+            <input type="time" id="night-start">
+        </div>
+        <div class="field">
+            <label for="night-end">Until</label>
+            <input type="time" id="night-end">
+        </div>
+        <div class="field">
+            <label for="night-brightness">Brightness</label>
+            <input type="range" id="night-brightness" min="0" max="255"
+                   data-setting="display.night.brightness">
+            <output for="night-brightness" id="night-brightness-out">16</output>
+            <p class="help">Zero switches the panel off until morning.</p>
+        </div>
+    </div>
+
+    <h2>Sound</h2>
+    <div class="field">
+        <label for="volume">Volume</label>
+        <input type="range" id="volume" min="0" max="100" data-setting="audio.volumePercent">
+        <output for="volume" id="volume-out">50</output>
+        <p class="help" id="volume-help">On the device: hold the knob for settings, turn to VOL, then &minus; / +.</p>
+    </div>
+</section>
+
+
+<section class="panel" id="panel-apps">
+    <h2>Apps</h2>
+    <div class="row">
+        <div class="field">
+            <label for="autoAdvance">Carousel</label>
+            <label class="switch">
+                <input type="checkbox" id="autoAdvance" data-setting="apps.autoAdvance">
+                <span>Rotate</span>
+            </label>
+            <p class="help">
+                Off holds one app on the panel until you turn the knob. The
+                knob and the API still change apps either way &mdash; this
+                only stops the clock doing it on its own.
+            </p>
+        </div>
+        <div class="field">
+            <label for="defaultDurationSeconds">Seconds per app</label>
+            <input type="number" id="defaultDurationSeconds" min="1" max="3600"
+                   data-setting="apps.defaultDurationSeconds">
+        </div>
+        <div class="field">
+            <label for="transitions">Transitions</label>
+            <label class="switch">
+                <input type="checkbox" id="transitions" data-setting="apps.transitions">
+                <span>Animate</span>
+            </label>
+        </div>
+        <div class="field">
+            <label for="apps-transition">Transition</label>
+            <select id="apps-transition" data-setting="apps.transition">
+                <option value="slide">Slide</option>
+                <option value="fade">Fade</option>
+                <option value="wipe">Wipe</option>
+                <option value="dissolve">Dissolve</option>
+                <option value="none">Cut</option>
+            </select>
+            <p class="help">
+                Between apps. A notification always fades in, whatever this
+                says &mdash; sliding would make it look like the next app
+                rather than an interruption.
+            </p>
+        </div>
+    </div>
+    <p class="help">
+        Drag to reorder, or use the arrows. The gear opens an app's own
+        settings; the order and the switches are remembered across restarts.
+    </p>
+    <ul class="list" id="app-list"></ul>
+</section>
+
+<section class="panel" id="panel-icons">
+    <h2>Icons</h2>
+    <!-- Icons are stored once and referred to by id, from a scene element or
+         from a notification. The budget is a byte count rather than a count of
+         icons: sixty-four static glyphs and eight animations cost the same
+         RAM, and a per-icon limit would either forbid the first or permit far
+         too much of the second. -->
+    <p class="help">
+        Used by name from a scene &mdash;
+        <code>{"type":"icon","icon":"mail"}</code> &mdash; or on a
+        notification. Pick several images at once and they become the frames of
+        one animation.
+    </p>
+    <div class="toolbar">
+        <button class="btn" id="icon-add" type="button">Add an icon</button>
+        <!-- Converted in the browser, because decoding PNG or GIF on the
+             device would mean running inflate or LZW against a file somebody
+             uploaded. The device only ever sees raw pixels. -->
+        <input type="file" id="icon-file" accept="image/*" multiple hidden>
+        <span class="muted" id="icon-budget">&ndash;</span>
+    </div>
+    <ul class="list" id="icon-list"></ul>
+</section>
+
+<section class="panel" id="panel-scripts">
+    <h2>Scripts</h2>
+    <!-- A script is a Berry class with a draw() method. It runs in a sandbox
+         with no filesystem, no dynamic loader and no bytecode reader, under a
+         per-frame instruction budget: a script that loops for ever loses its
+         frame, not the panel. Saving one puts it in the carousel. -->
+    <p class="help">
+        Berry. A class with a <code>draw()</code> method, ending in
+        <code>return YourClass()</code>. Saving adds it to the carousel; the
+        panel updates as soon as you save.
+    </p>
+
+    <div class="editor">
+        <div class="editor-side">
+            <div class="toolbar">
+                <button class="btn" id="script-new" type="button">New script</button>
+            </div>
+            <ul class="list" id="script-list"></ul>
+            <p class="muted" id="script-budget">&ndash;</p>
+        </div>
+
+        <div class="editor-main">
+            <div class="row">
+                <div class="field">
+                    <label for="script-id">Id</label>
+                    <input type="text" id="script-id" spellcheck="false"
+                           placeholder="my-script" maxlength="48">
+                    <p class="help">
+                        Lowercase letters, digits, dashes and underscores. It
+                        cannot be changed later &mdash; saving under a new id
+                        makes a second script.
+                    </p>
+                </div>
+                <div class="field">
+                    <label for="script-name">Name</label>
+                    <input type="text" id="script-name" maxlength="64"
+                           placeholder="Shown in the app list">
+                </div>
+            </div>
+
+            <!-- What the script asked to be asked.
+                 Declared in `# @config` comments at the top of the source and
+                 rendered here, so changing a channel ID is filling in a field
+                 rather than editing Berry and hoping. Empty for a script that
+                 declares nothing, which is most of them. -->
+            <div class="settings" id="script-settings" hidden>
+                <h3 class="settings__title">Settings</h3>
+                <div id="script-settings-fields"></div>
+                <p class="help settings__note">
+                    Saved as you change them, separately from the source
+                    &mdash; so setting a value cannot recompile anything.
+                </p>
+            </div>
+
+            <!-- A real textarea with a highlighted copy behind it.
+                 Still no editor library. This page is compiled into the
+                 firmware (cmake/EmbedWebAssets.cmake) and ADR 0012 keeps
+                 dependencies out of it, so the highlighting is a tokeniser
+                 in app.js drawing into the <pre> underneath - the textarea
+                 on top keeps its own caret, selection, undo stack, spell
+                 checking and mobile keyboard, none of which a contenteditable
+                 reimplementation gets right.
+                 The two elements must agree on font, size, line height,
+                 padding and wrapping to the pixel; app.css keeps them in one
+                 place for exactly that reason. -->
+            <label for="script-source" class="sr-only">Source</label>
+            <div class="codebox" id="script-box">
+                <!-- Line numbers, because the compiler answers with one. -->
+                <div class="gutter" id="script-gutter" aria-hidden="true"></div>
+                <div class="codescroll">
+                    <pre class="hl" aria-hidden="true"><code id="script-hl"></code></pre>
+                    <textarea id="script-source" class="code" spellcheck="false"
+                              autocapitalize="off" autocomplete="off"
+                              rows="18" wrap="off"></textarea>
+                </div>
+            </div>
+
+            <div class="toolbar">
+                <button class="btn primary" id="script-save" type="button">Save</button>
+                <button class="btn" id="script-delete" type="button">Delete</button>
+                <span class="muted" id="script-bytes">&ndash;</span>
+            </div>
+
+            <!-- Where the compiler's message goes, with the line number it
+                 gave. An error with nowhere to appear is an error somebody has
+                 to guess at. -->
+            <p class="problem" id="script-problem" hidden></p>
+        </div>
+    </div>
+</section>
+
+<section class="panel" id="panel-notify">
+    <h2>Sound</h2>
+    <div class="field">
+        <label for="notify-sound">Notification sound</label>
+        <!-- Filled from GET /api/v1/sound, not hard-coded. This list used to
+             name three of the five sounds the firmware had, which is the
+             failure mode of writing a catalogue down twice. Silent stays in
+             the markup because it is a setting rather than a sound, so the
+             select is never empty even if the request fails. -->
+        <select id="notify-sound" data-setting="notifications.sound">
+            <option value="none">Silent</option>
+        </select>
+        <button class="btn" id="notify-sound-test" type="button">Play it</button>
+        <p class="help" id="notify-sound-help">
+            Played when a notification appears, unless it asks for a different
+            one. <strong>Play it</strong> makes the noise now, so you can pick
+            one without waiting for something to happen.
+        </p>
+    </div>
+
+    <h2>Send a notification</h2>
+    <div class="field">
+        <label for="notify-text">Text</label>
+        <input type="text" id="notify-text" maxlength="200" placeholder="Dinner is ready">
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="notify-priority">Priority</label>
+            <select id="notify-priority">
+                <option value="normal">Normal</option>
+                <option value="high">Urgent</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="notify-duration">Seconds</label>
+            <input type="number" id="notify-duration" min="1" max="3600" value="8">
+        </div>
+    </div>
+    <button class="btn primary" id="notify-send" type="button">Send</button>
+    <h2>Queued</h2>
+    <ul class="list" id="notify-list"></ul>
+</section>
+
+<section class="panel" id="panel-mqtt">
+    <h2>Broker</h2>
+    <div class="field">
+        <label for="mqtt-enabled">MQTT</label>
+        <label class="switch">
+            <input type="checkbox" id="mqtt-enabled" data-setting="mqtt.enabled">
+            <span>Enabled</span>
+        </label>
+        <p class="help">
+            Optional. Everything here is also available over HTTP, and the device works
+            fully with no broker at all.
+        </p>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="mqtt-host">Host</label>
+            <input type="text" id="mqtt-host" maxlength="255" placeholder="192.168.1.10"
+                   data-setting="mqtt.host">
+        </div>
+        <div class="field">
+            <label for="mqtt-port">Port</label>
+            <input type="number" id="mqtt-port" min="1" max="65535" data-setting="mqtt.port">
+        </div>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="mqtt-username">Username</label>
+            <input type="text" id="mqtt-username" maxlength="128" data-setting="mqtt.username">
+        </div>
+        <div class="field">
+            <label for="mqtt-password">Password</label>
+            <input type="password" id="mqtt-password" maxlength="128" autocomplete="new-password">
+            <p class="help" id="mqtt-password-help">Not set.</p>
+            <!-- The browser is right to warn about this, so the page agrees with
+                 it rather than trying to look reassuring. The device serves
+                 plain HTTP: it has no certificate, nothing to get one from, and
+                 no clock it can trust at boot to check an expiry against. -->
+            <p class="help warn-note">
+                This page is served over plain HTTP, so this password crosses
+                your LAN unencrypted. The device also stores it unencrypted.
+                Use a broker account that only STIPPLE uses.
+            </p>
+        </div>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="mqtt-baseTopic">Base topic</label>
+            <input type="text" id="mqtt-baseTopic" maxlength="64" data-setting="mqtt.baseTopic">
+            <p class="help" id="mqtt-topic-preview"></p>
+        </div>
+        <div class="field">
+            <label for="mqtt-keepAlive">Keep-alive</label>
+            <input type="number" id="mqtt-keepAlive" min="5" max="65535"
+                   data-setting="mqtt.keepAliveSeconds">
+        </div>
+    </div>
+    <div class="field">
+        <label for="mqtt-tls">TLS</label>
+        <label class="switch">
+            <input type="checkbox" id="mqtt-tls" data-setting="mqtt.tls">
+            <span>Use TLS</span>
+        </label>
+        <p class="help" id="mqtt-tls-help">
+            The device refuses to connect rather than falling back to plaintext, so
+            credentials are never sent in the clear by accident.
+        </p>
+    </div>
+</section>
+
+<section class="panel" id="panel-system">
+
+    <!-- Shown once, on a device nobody has configured yet. It is a state and
+         not a wizard: nothing is blocked behind it, and it stops appearing
+         the moment anything is saved rather than when a button is pressed. A
+         button somebody has to find is a step that can be missed. -->
+    <p class="notice" id="first-run" hidden>
+        <strong>Welcome.</strong> This device has not been set up yet. Choose a
+        network below, and set a password under Access if anyone else uses this
+        network. Everything else already works - the clock is running.
+    </p>
+    <h2>System</h2>
+    <div class="field">
+        <label for="deviceName">Device name</label>
+        <input type="text" id="deviceName" maxlength="64" data-setting="deviceName">
+    </div>
+    <dl class="facts" id="device-facts"></dl>
+    <h2>Network</h2>
+    <dl class="facts" id="network-facts"></dl>
+    <div class="toolbar">
+        <button class="btn" id="network-scan" type="button">Scan</button>
+        <span class="muted" id="network-note"></span>
+    </div>
+    <!-- A dropdown, not a list. A dozen networks is a dozen rows on a page
+         that also holds time, panel and maintenance settings, and all anyone
+         does with them is pick one.
+
+         "Other..." is not a fallback for when the list fails: a hidden
+         network never appears in any list, and while the device is hosting
+         its own access point it cannot scan at all - which is precisely when
+         somebody is standing here trying to join one. -->
+    <div class="row">
+        <select id="join-pick"></select>
+        <input id="join-password" type="password" placeholder="Password"
+               autocomplete="new-password" maxlength="63">
+        <button class="btn" id="join-go" type="button">Join</button>
+    </div>
+    <div class="row" id="join-other-row" hidden>
+        <input id="join-ssid" type="text" placeholder="Network name" autocomplete="off"
+               spellcheck="false" maxlength="32">
+    </div>
+    <p class="muted" id="join-note"></p>
+
+    <h2>Access</h2>
+    <!-- Off by default, and offered here rather than left to be discovered.
+         A device that demanded a password before it would show a clock would
+         be a worse first five minutes than the risk it removes.
+
+         One mechanism covers the API and this page, because they are the
+         same server and two schemes would be two things to get wrong. -->
+    <p class="help" id="access-state"></p>
+    <div class="row">
+        <input id="access-user" type="text" placeholder="Username" autocomplete="username"
+               spellcheck="false" maxlength="64">
+        <input id="access-pass" type="password" placeholder="Password"
+               autocomplete="new-password" maxlength="128">
+        <button class="btn" id="access-save" type="button">Set</button>
+        <button class="btn" id="access-clear" type="button">Turn off</button>
+    </div>
+    <p class="help">
+        Sent in the clear over your network, and stored on the device in the clear.
+        It keeps the rest of the LAN out; it is not protection from someone
+        holding the device. Forgotten it? Hold &minus; and + together for five
+        seconds and it is cleared.
+    </p>
+
+    <h2>Firmware</h2>
+    <!-- An update is a file copy, not a flash (ADR 0021). The framework is
+         pointed at a shim in the read-only partition, and the shim tries an
+         override in /data first, then the copy flashed beside it, then the
+         stock clock - so an update that will not load costs a reboot rather
+         than a device.
+
+         This replaced a "stage a recovery image" control that wrote
+         update.img to the USB volume. That turned out to be actively
+         dangerous: the vendor's own zkdaemon installs whatever sits there on
+         unattended recovery, and it reverted a working STIPPLE on real
+         hardware. A staged image is an armed revert, not a safety net. -->
+    <p class="help" id="firmware-state">Checking&hellip;</p>
+    <div class="row">
+        <input id="firmware-file" type="file" accept=".so,application/octet-stream">
+        <button class="btn" id="firmware-upload" type="button">Install</button>
+        <button class="btn" id="firmware-rollback" type="button" hidden>Go back</button>
+        <!-- Beside the thing that needs it. There is a Restart device button
+             further down this tab, but an update that only takes effect on
+             restart should not send somebody looking for it. -->
+        <button class="btn" id="firmware-restart" type="button" hidden>Restart now</button>
+    </div>
+    <p class="help">
+        Upload <code>libstipple.so</code> from a release. It is checked here
+        first &mdash; it has to be a 32-bit ARM shared library, so a host build
+        is refused rather than installed &mdash; then written beside the
+        running one and renamed into place, so a failed upload changes
+        nothing. Nothing is flashed, and the device keeps the previous version
+        so you can go back.
+    </p>
+
+    <h2>Backup</h2>
+    <p class="help">
+        Downloads every setting as a file. The MQTT password is not in it
+        &mdash; the device never gives it back, to anyone &mdash; so it has to
+        be typed in again after a restore.
+    </p>
+    <div class="toolbar">
+        <button class="btn" id="backup" type="button">Download backup</button>
+        <button class="btn" id="restore" type="button">Restore from file</button>
+        <!-- id is settings-specific on purpose: this and the firmware picker
+             both used to be called restore-file, and getElementById returned
+             whichever came first in the document. -->
+        <input type="file" id="settings-file" accept="application/json,.json" hidden>
+    </div>
+
+    <h2>Reset</h2>
+    <p class="help">
+        Puts settings back to their defaults. The device keeps its name, so it
+        is still the one you were looking at.
+    </p>
+    <div class="toolbar">
+        <button class="btn danger" id="reset" type="button">Reset settings</button>
+        <button class="btn danger" id="reset-all" type="button">Reset settings and apps</button>
+    </div>
+
+    <h2>Restart</h2>
+    <p class="help">
+        Settings are saved as you change them, so a restart loses nothing.
+    </p>
+    <div class="toolbar">
+        <button class="btn danger" id="reboot" type="button">Restart device</button>
+    </div>
+</section>
+
+<section class="panel" id="panel-logs">
+    <h2>Log</h2>
+    <div class="toolbar">
+        <label class="switch">
+            <input type="checkbox" id="log-follow" checked>
+            <span>Follow</span>
+        </label>
+        <span class="muted" id="log-meta"></span>
+    </div>
+    <ol class="logview" id="logview"></ol>
+</section>
+
+
+<!-- Per-app settings.
+     Parked here rather than built when a row expands, so the controls exist in
+     the DOM at load and bindControls() binds them exactly once like every
+     other setting. app.js moves the matching panel into its row and back; it
+     never clones, because two copies of one control is two answers to the same
+     question. -->
+<div id="app-config-stash" hidden>
+    <div class="app-config" data-app="clock">
+    <div class="field">
+        <label for="theme">Face</label>
+        <select id="theme" data-setting="clock.theme">
+            <option value="minimal">Minimal &mdash; HH:MM</option>
+            <option value="seconds">Seconds &mdash; HH:MM:SS</option>
+            <option value="date">Date below</option>
+            <option value="weekday">Weekday below</option>
+            <option value="secondsbar">Seconds bar</option>
+            <option value="calendar">Calendar</option>
+        </select>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="twentyFourHour">24-hour</label>
+            <label class="switch">
+                <input type="checkbox" id="twentyFourHour" data-setting="clock.twentyFourHour">
+                <span>24h</span>
+            </label>
+        </div>
+        <div class="field">
+            <label for="leadingZero">Leading zero</label>
+            <label class="switch">
+                <input type="checkbox" id="leadingZero" data-setting="clock.leadingZero">
+                <span>07:05</span>
+            </label>
+        </div>
+        <div class="field">
+            <label for="showAmPm">AM/PM</label>
+            <label class="switch">
+                <input type="checkbox" id="showAmPm" data-setting="clock.showAmPm">
+                <span>Show</span>
+            </label>
+            <p class="help" id="ampm-help">12-hour faces only, where there is room.</p>
+        </div>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="color">Digits</label>
+            <input type="color" id="color" data-setting="clock.color">
+        </div>
+        <div class="field">
+            <label for="accentColor">Accent</label>
+            <input type="color" id="accentColor" data-setting="clock.accentColor">
+            <p class="help">Colon, seconds bar, calendar header.</p>
+        </div>
+        <div class="field">
+            <label for="dateColor">Date</label>
+            <input type="color" id="dateColor" data-setting="clock.dateColor">
+        </div>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="dateOrder">Date order</label>
+            <select id="dateOrder" data-setting="clock.dateOrder">
+                <option value="dayMonthYear">31.12</option>
+                <option value="monthDayYear">12.31</option>
+                <option value="yearMonthDay">Year first</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="dateSeparator">Separator</label>
+            <select id="dateSeparator" data-setting="clock.dateSeparator">
+                <option value="dot">31.12</option>
+                <option value="slash">31/12</option>
+                <option value="dash">31-12</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="dateYear">Year</label>
+            <select id="dateYear" data-setting="clock.dateYear">
+                <option value="none">Hidden</option>
+                <option value="twoDigit">26</option>
+                <option value="fourDigit">2026</option>
+            </select>
+        </div>
+    </div>
+    <div class="row">
+        <div class="field">
+            <label for="blinkPeriodMillis">Colon blink</label>
+            <select id="blinkPeriodMillis" data-setting="clock.blinkPeriodMillis" data-numeric="1">
+                <option value="0">Always lit</option>
+                <option value="500">Fast</option>
+                <option value="1000">One second</option>
+                <option value="2000">Slow</option>
+            </select>
+        </div>
+        <div class="field">
+            <label for="timezone">Timezone</label>
+            <select id="timezone" data-setting="clock.timezone"></select>
+            <p class="help" id="timezone-help">
+                Follows daylight saving on its own.
+            </p>
+        </div>
+        <div class="field" id="offset-field">
+            <label for="utcOffsetSeconds">UTC offset</label>
+            <select id="utcOffsetSeconds" data-setting="clock.utcOffsetSeconds"></select>
+            <p class="help">
+                Used only when no timezone is chosen.
+            </p>
+        </div>
+    </div>
+    <div class="field">
+        <label class="check">
+            <input type="checkbox" id="clock-tick" data-setting="clock.tick">
+            Audible tick
+        </label>
+        <p class="help" id="clock-tick-help">
+            A quiet tick and tock once a second, only while the clock is on
+            screen. Off by default.
+        </p>
+    </div>
+    </div>
+
+    <div class="app-config" data-app="visualizer">
+        <div class="field">
+            <label for="visualizer-style">Style</label>
+            <select id="visualizer-style" data-setting="visualizer.style">
+                <option value="wave">Wave &mdash; travelling, playful</option>
+                <option value="meter">Meter &mdash; a level rising from the bottom</option>
+                <option value="trace">Trace &mdash; scrolling history</option>
+            </select>
+            <p class="help">
+                All three draw the same reading. The panel reports loudness about
+                twenty times a second, not audio, so none of them is a waveform of
+                the room.
+            </p>
+        </div>
+    </div>
+
+    <div class="app-config" data-app="glucose">
+        <div class="field">
+            <label for="glucose-url">Nightscout URL</label>
+            <input type="url" id="glucose-url" maxlength="200" placeholder="http://nightscout.local:1337"
+                   data-setting="glucose.url">
+            <p class="help">
+                The site's base address, with the scheme. Nothing is fetched until
+                one is set; the app shows its no-data face instead.
+            </p>
+        </div>
+        <div class="field">
+            <label for="glucose-pinned">Keep on screen</label>
+            <label class="switch">
+                <input type="checkbox" id="glucose-pinned" data-setting="glucose.pinned">
+                <span>Pinned</span>
+            </label>
+            <p class="help">
+                While a source is set, the glucose app stays on screen and the
+                carousel stops rotating; the knob then moves between its faces.
+                The middle button still leaves, and the carousel comes back to it.
+            </p>
+        </div>
+        <div class="field">
+            <label for="glucose-apiSecret">API secret</label>
+            <input type="password" id="glucose-apiSecret" maxlength="128" autocomplete="new-password">
+            <p class="help" id="glucose-apiSecret-help">Not set.</p>
+            <p class="help warn-note">
+                Sent over plain HTTP to the device, which keeps only its SHA-1 -
+                the form Nightscout checks. Use a site whose readings you are
+                happy to have on a panel in the room.
+            </p>
+        </div>
+        <div class="row">
+            <div class="field">
+                <label for="glucose-pollSeconds">Ask every</label>
+                <select id="glucose-pollSeconds" data-setting="glucose.pollSeconds" data-numeric="1">
+                    <option value="30">30 seconds</option>
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                </select>
+            </div>
+            <div class="field">
+                <label for="glucose-face">Face</label>
+                <select id="glucose-face" data-setting="glucose.face">
+                    <option value="hero">Hero &mdash; the number and its direction</option>
+                    <option value="hero-delta">Hero + delta &mdash; with the change and age</option>
+                    <option value="hero-graph">Hero + graph &mdash; three hours beside it</option>
+                    <option value="clock">Clock &mdash; time and value, bedside</option>
+                    <option value="big-graph">Big graph &mdash; the whole panel</option>
+                </select>
+                <p class="help">
+                    A reading older than twenty minutes shows the no-data face
+                    whatever is chosen here.
+                </p>
+            </div>
+        </div>
+
+        <h3 class="alarm-heading">Alarms</h3>
+        <p class="help warn-note" id="alarm-no-speaker" hidden>
+            This device has no working speaker, so no alarm can sound. The
+            settings below are kept, but nothing will be heard.
+        </p>
+        <p class="help">
+            Like nightscout-clock: each alarm has its own threshold, snooze,
+            alert windows and sound. Press the knob to snooze whichever is
+            sounding. The panel switches to the reading while an alarm sounds,
+            even when it is off or showing a notification.
+        </p>
+        <!-- One block per alarm, built by app.js from a single template. -->
+        <div id="glucose-alarms"></div>
+
+        <div class="row">
+            <div class="field">
+                <label for="alarm-repeatSeconds">Repeat every</label>
+                <select id="alarm-repeatSeconds" data-setting="glucose.alarms.repeatSeconds"
+                        data-numeric="1">
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                </select>
+                <p class="help">Until snoozed. Intensive mode overrides this.</p>
+            </div>
+            <div class="field">
+                <label for="alarm-volumePercent">Alarm volume
+                    <output id="alarm-volumePercent-out"></output>%</label>
+                <input type="range" id="alarm-volumePercent" min="20" max="100" step="5"
+                       data-setting="glucose.alarms.volumePercent">
+                <p class="help">
+                    Separate from the device volume: − and + never make an
+                    alarm quieter. To silence one, turn it off.
+                </p>
+            </div>
+        </div>
+        <div class="field">
+            <label class="switch">
+                <input type="checkbox" id="alarm-intensive" data-setting="glucose.alarms.intensive">
+                <span>Intensive &mdash; sound again two seconds after each melody until snoozed</span>
+            </label>
+        </div>
+    </div>
+</div>
+
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
