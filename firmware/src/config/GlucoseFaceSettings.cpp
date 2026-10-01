@@ -79,11 +79,13 @@ std::vector<std::string> namesOf(plan::FaceMask mask) {
     return names;
 }
 
+/// Insertion sort, stable: six rows at most, and no temporary buffer.
 void sortRows(std::vector<GlucoseScheduleRow>& rows) {
-    std::stable_sort(rows.begin(), rows.end(),
-                     [](const GlucoseScheduleRow& a, const GlucoseScheduleRow& b) {
-                         return a.minutes < b.minutes;
-                     });
+    for (std::size_t i = 1; i < rows.size(); ++i) {
+        for (std::size_t j = i; j > 0 && rows[j - 1].minutes > rows[j].minutes; --j) {
+            std::swap(rows[j - 1], rows[j]);
+        }
+    }
 }
 
 /// Every cross-field rule, on settings whose individual fields already parsed.
