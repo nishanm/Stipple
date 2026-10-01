@@ -16,7 +16,8 @@ renderer is the reference: the faces here are a port of its `faces.py`, and the
 test suite holds them **byte-identical** to its golden corpus.
 
 Stage 1 was faces only; Stage 2 added the Nightscout source and its settings;
-Stage 3 made the display a mode the knob works inside. The urgent-low alarm
+Stage 3 made the display a mode the knob works inside. Stage 4 added the
+speaker alarm, configurable like nightscout-clock's. The brightness schedule
 and the rest of the settings page are later stages, each scoped on its own.
 
 ## Decisions
@@ -157,6 +158,107 @@ panel when a readout expired, which the clock's per-second redraw had hidden.
 **Persisted, but not per detent.** The face is saved once the knob has been
 still for two seconds - one flash write per decision. The API's PATCH saves
 itself, so a knob change is also carried by any later PATCH.
+
+## Stage 4: the alarm
+
+The panel sounds an alarm through its own speaker. The owner asked for it to
+be "configurable to the level of" the nightscout-clock firmware on their three
+TC001 clocks, so the settings are that firmware's, nearly field for field, under
+`glucose.alarms`:
+
+| | |
+|---|---|
+| `urgentLow`, `low`, `high` | `enabled`, `mgdl` (30-399), `snoozeMinutes` (5, 10, 15, 30, 60, 120, or 0 = until it leaves the range), `windows`, `melody` |
+| `noData` | the same, with `minutes` (20, 30, 45, 60) instead of `mgdl` |
+| `repeatSeconds` | 60, 120, 300 |
+| `intensive` | repeat two seconds after the melody ends |
+| `volumePercent` | 20-100, the alarm's own level |
+
+Defaults are the clocks' (55 / 70 / 280; snooze 15 / 30 / 60; their three
+melodies, verbatim), except that urgent low is **on**: spec A1 requires it, and
+it can only sound on a fresh reading, which needs a configured source.
+
+### Decisions
+
+**The clocks' model, kept to the letter where the owner will notice.** Ranges
+are theirs: urgent low is `[1, U]`, low is `[U+1, L-1]` whether or not urgent
+low is enabled, high is `H` and up. Alert windows are theirs: `{days, from,
+to}` with `days` as `tm_wday` digits, sounding only inside a window, a window
+whose end is before its start running past midnight, the days being the days it
+starts on, and an empty list meaning any time. Melodies are RTTTL in the
+dialect their settings page accepts, and the page offers their presets, so a
+melody copied from a clock sounds the same here. A stale reading silences the
+glucose alarms, as on the clocks.
+
+**Three deliberate differences.** A lesser snooze never silences a worse
+alarm: on the clocks a snoozed low that drops into urgent low inherits the low's
+snooze, here urgent low sounds at once (the reverse - urgent low snoozed,
+recovering into low - stays quiet until the snooze ends). Snooze counts from
+the press, not from the last time it sounded. High has no 401 cap, because the
+source accepts readings up to 1000.
+
+**No data is an alarm here, off by default.** The clocks have none, and a stale
+reading silences everything - so a Nightscout that stops answering during a low
+ends the alarm. `noData` is the net under that: it counts from the newest
+sample, or from when fetching became possible if none ever came. The owner
+chose to add it and to leave it off.
+
+**The alarm's volume is absolute.** `IAudioOutput::playMelody(melody,
+level)` ignores `setVolume`; − and + never make an alarm quieter, and there is
+no 0 - to silence an alarm, disable it. Volume is never swapped temporarily
+through `setVolume`, which would race with PATCH and − / +.
+
+**Melodies are timed by samples, not by the loop.** `audio::MelodyGenerator`
+is pulled by the adapter like `ToneGenerator` and changes note on exact sample
+counts. Stepping notes from the main loop would start each one up to a loop
+iteration late - half a note on the 34 ms notes of the "urgent" preset. A
+melody is at most 64 notes and ten seconds, and one made only of rests is
+refused: it would be a silent alarm.
+
+**Nothing cuts it off.** A tone replaces whatever the speaker is playing, and
+the clock ticks once a second whenever Back lands on it. While a melody plays,
+the TC002 adapter refuses tones and named sounds and `stop()` leaves the melody
+alone; notifications, the clock tick, the volume beep and scripts all reach the
+speaker through `audio::SharedSpeaker`, which refuses them for the melody's
+length. A test melody from the API takes the same hold, and the API refuses a
+test while a real alarm sounds.
+
+**It takes the screen.** On every sound - new, escalated or repeated - the host
+leaves settings, dismisses the splash, activates glucose and pins it;
+`glucoseHoldWanted()` includes "an alarm is sounding" so the pin survives
+`pinned: false`. Back still leaves (no trap) and the next repeat comes back.
+While it sounds the reading is drawn over a notification and on a panel that
+is switched off - drawn, never switched on - with a brightness floor of 16.
+
+**The knob press snoozes, from anywhere.** Taken from the raw press-down, after
+the rescue and setup gestures and before the splash, settings and the mapper,
+so it does not depend on what is on screen or how the buttons are bound. The
+release is swallowed, so the press does nothing else and a held knob never
+opens settings. `SNOOZE / 15 MIN` is shown for 2.5 s. With no alarm sounding,
+the press does what it always did. Snooze is never persisted - a reboot
+re-alarms, the safe direction - and never writes flash, so a fsync stall cannot
+gap the next melody.
+
+**Settings never fall back to silence.** PATCH validates `glucose.alarms`
+strictly and whole (wrong type, range or order: `422`, nothing changed). A
+stored alarm that fails today's rules loads as its default; a melody that will
+not compile plays the built-in default and is counted in diagnostics
+(`alarm.melodyFallbacks`). The config parser's token budget doubled to 2048 for
+four alarms of eight windows each, and its tokens moved to the heap.
+
+**Diagnostics say what happened.** `alarm.state` (quiet / sounding / snoozed),
+`kind`, `snoozedSeconds`, `lastPlayAgeSeconds`, `plays`, `playFailures`,
+`melodyFallbacks`, `speaker`. No speaker is logged as a warning at boot and
+shown as a banner on the settings page.
+
+### Known limits
+
+No hysteresis: a reading that flaps across a threshold re-arms each time (the
+clocks do the same). Any knob press snoozes. A main-loop stall longer than the
+driver's ~48 ms buffer gaps a melody. Safe mode has no source and so no alarm.
+Loudness at 100 % is `ToneGenerator`'s 9000/32767 peak, the same as a 100 %
+button beep - whether that wakes someone across a bedroom is for the owner's
+ears on the device.
 
 ## The golden gate
 

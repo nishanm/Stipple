@@ -6,6 +6,7 @@
 #include <vector>
 #include <string_view>
 
+#include "stipple/config/GlucoseAlarmSettings.h"
 #include "stipple/platform/Storage.h"
 
 namespace stipple {
@@ -316,6 +317,9 @@ struct GlucoseSettings {
     /// button still leaves; the carousel comes back to it and holds again.
     /// Off, the app takes its turn in the rotation like any other.
     bool pinned = true;
+
+    /// The speaker alarm (Stage 4). See GlucoseAlarmSettings.
+    GlucoseAlarmSettings alarms;
 };
 
 /// Who may talk to this device (ADR 0018).
@@ -413,7 +417,13 @@ public:
     /// The cost is stack: the parser holds this many 12-byte tokens in one
     /// frame, so 1024 is 12 KB. That is affordable here and worth measuring
     /// again before it grows much further.
-    static constexpr int kMaxTokens = 1024;
+    ///
+    /// Raised to 2048 when the glucose alarm arrived: four alarms with eight
+    /// alert windows each is about 290 tokens, and the half-spare margin
+    /// TokenBudgetHasHeadroom asserts would not have survived it. The tokens
+    /// moved to the heap at the same time (24 KB is a third of the browser
+    /// emulator's default stack); loading is not the render path.
+    static constexpr int kMaxTokens = 2048;
 
     explicit ConfigStore(platform::IStorage& storage) noexcept : storage_(storage) {}
 

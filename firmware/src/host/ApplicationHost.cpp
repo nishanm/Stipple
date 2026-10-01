@@ -52,6 +52,7 @@ api::ApiContext ApplicationHost::makeContext() noexcept {
     context.input = this;
     context.scheduler = &scheduler_;
     context.glucose = &glucoseSource_;
+    context.glucoseAlarm = &glucoseAlarm_;
     return context;
 }
 
@@ -166,6 +167,8 @@ bool ApplicationHost::initialize() {
     if (platform_.audio() != nullptr) {
         platform_.audio()->setVolume(config::volumeToByte(settings_.audio.volumePercent));
     }
+    sharedSpeaker_.attach(platform_.audio());
+    glucoseAlarm_.configure(settings_.glucose.alarms);
 
     applyCarouselSettings();
 
@@ -178,6 +181,10 @@ bool ApplicationHost::initialize() {
         // stored order so a disabled app fails the pin cleanly.
         glucoseSource_.configure(settings_.glucose.url, settings_.glucose.apiSecretSha1,
                                  settings_.glucose.pollSeconds);
+        // Here as well as in setScriptRunner: a glucose display whose source
+        // only got a client when a script runner was installed would be an
+        // alarm that depends on the scripting engine.
+        glucoseSource_.setClient(platform_.httpClient());
         if (glucoseHoldWanted()) {
             carousel_.pin(kGlucoseAppId, startedAt);
         }
@@ -217,6 +224,9 @@ bool ApplicationHost::initialize() {
     navigator_.setAvailable(input::SettingSlot::Volume, platform_.audio() != nullptr);
     if (platform_.audio() == nullptr) {
         logger_.info(startedAt, "no audio output; volume is not offered in settings");
+        // Said louder than the line above: on a glucose display this is the
+        // difference between an alarm and a number nobody hears.
+        logger_.warn(startedAt, "no speaker: glucose alarms cannot sound");
     }
 
     splashDetail_ = apps::splashDetail(kVersion, platform_.network());
@@ -375,7 +385,8 @@ void ApplicationHost::setScriptRunner(script::IScriptRunner* runner) {
     // the next reboot would look exactly like one that had not saved.
     // The speaker, if this device has one. Null is a supported answer and
     // the builtins report it rather than pretending to play.
-    runner->setAudio(platform_.audio());
+    // Through the shared speaker, so a script's tone cannot cut off an alarm.
+    runner->setAudio(platform_.audio() != nullptr ? &sharedSpeaker_ : nullptr);
 
     // And the broker. Always handed over, even with MQTT switched off: the
     // gateway reports its own state, so a script asking mqtt_known() gets a
@@ -541,6 +552,24 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
     // Same reasoning, same position in the order: a hold that only works on
     // the carousel is one nobody can rely on.
     setupHold_.handle(event);
+
+    // The knob press snoozes a sounding alarm - wherever it is pressed, and
+    // ahead of the splash, settings and every binding, because "make it stop"
+    // must not depend on what is on screen or how the buttons are mapped. Taken
+    // on the Down so it answers at once; the matching Up is swallowed, so the
+    // press does nothing else and a held knob never opens settings.
+    if (event.source == platform::RawInput::RotaryPress) {
+        if (event.phase == platform::ButtonPhase::Down && glucoseAlarm_.sounding()) {
+            snoozeGlucoseAlarm();
+            swallowKnobRelease_ = true;
+            mapper_.reset();
+            return;
+        }
+        if (event.phase == platform::ButtonPhase::Up && swallowKnobRelease_) {
+            swallowKnobRelease_ = false;
+            return;
+        }
+    }
 
     // Any interaction means the user is looking at the device and wants to get
     // on with it. The press is consumed rather than also performing its normal
@@ -709,6 +738,7 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
             adjustmentShownUntilMillis_ = lastTickMillis_ + kAdjustmentReadoutMillis;
             adjustmentIsVolume_ = platform_.audio() != nullptr;
             adjustmentIsFace_ = false;
+            adjustmentIsSnooze_ = false;
             break;
         }
         case input::Action::BrightnessUp:
@@ -723,6 +753,7 @@ void ApplicationHost::handleInput(const platform::InputEvent& event) {
             adjustmentShownUntilMillis_ = lastTickMillis_ + kAdjustmentReadoutMillis;
             adjustmentIsVolume_ = false;
             adjustmentIsFace_ = false;
+            adjustmentIsSnooze_ = false;
             break;
         case input::Action::VolumeUp:
         case input::Action::VolumeDown:
@@ -790,7 +821,7 @@ bool ApplicationHost::adjustVolume(int steps) {
     // Skipped at zero: a confirmation beep for "silence" is a contradiction,
     // and it is the one setting where the absence of sound is the feedback.
     if (percent > 0) {
-        platform_.audio()->playTone(kVolumeFeedbackHz, kVolumeFeedbackMillis);
+        sharedSpeaker_.playTone(kVolumeFeedbackHz, kVolumeFeedbackMillis);
     }
     return true;
 }
@@ -946,8 +977,11 @@ void ApplicationHost::applyBrightness() {
     // whatever it was dimmed to. Which is also why brightness is pushed from
     // here rather than written straight to the display when the setting
     // changes - there are now two things that decide it.
-    const std::uint8_t wanted = nightModeActive() ? settings_.display.night.brightness
-                                                  : settings_.display.brightness;
+    std::uint8_t wanted = nightModeActive() ? settings_.display.night.brightness
+                                            : settings_.display.brightness;
+    if (glucoseAlarm_.sounding() && wanted < kAlarmBrightnessFloor) {
+        wanted = kAlarmBrightnessFloor;
+    }
     if (wanted == appliedBrightness_) {
         return;
     }
@@ -1064,7 +1098,10 @@ void ApplicationHost::persistAppOrderIfChanged() {
 }
 
 bool ApplicationHost::glucoseHoldWanted() const noexcept {
-    return settings_.glucose.pinned && glucoseSource_.configured();
+    // A sounding alarm holds the screen whatever `pinned` says; without this
+    // term the pin it takes would be dropped again on the next tick.
+    return (settings_.glucose.pinned && glucoseSource_.configured()) ||
+           glucoseAlarm_.sounding();
 }
 
 void ApplicationHost::applyGlucoseHold(std::uint64_t nowMillis) {
@@ -1094,7 +1131,119 @@ void ApplicationHost::stepGlucoseFace(int direction) {
         adjustmentShownUntilMillis_ = lastTickMillis_ + kAdjustmentReadoutMillis;
         adjustmentIsVolume_ = false;
         adjustmentIsFace_ = true;
+        adjustmentIsSnooze_ = false;
     }
+    scheduler_.invalidate();
+}
+
+void ApplicationHost::tickGlucoseAlarm(std::uint64_t nowMillis) {
+    // Re-told every tick, like the source; configure() only acts on a change.
+    glucoseAlarm_.configure(settings_.glucose.alarms);
+
+    const platform::ISystemClock& clock = platform_.clock();
+    const bool clockValid = clock.wallClockValid();
+    const bool configured = glucoseSource_.configured();
+    if (configured && clockValid) {
+        if (glucoseFetchableSinceMillis_ == 0) {
+            glucoseFetchableSinceMillis_ = nowMillis == 0 ? 1 : nowMillis;
+        }
+    } else {
+        glucoseFetchableSinceMillis_ = 0;
+    }
+
+    const apps::glucose::Reading& reading = glucoseSource_.reading();
+    apps::glucose::AlarmInputs inputs;
+    inputs.nowMillis = nowMillis;
+    inputs.configured = configured;
+    inputs.fresh = reading.historyCount > 0 && !reading.stale();
+    inputs.sgv = reading.sgv;
+    if (configured && clockValid) {
+        inputs.dataAgeMinutes =
+            reading.historyCount > 0
+                ? reading.minutesAgo
+                : static_cast<int>((nowMillis - glucoseFetchableSinceMillis_) / 60000u);
+    }
+    if (clockValid) {
+        inputs.clockValid = true;
+        apps::glucose::localDayAndMinute(clock.unixSeconds(), currentUtcOffsetSeconds(),
+                                         inputs.weekday, inputs.localMinutes);
+    }
+
+    const apps::glucose::GlucoseAlarm::Decision decision = glucoseAlarm_.tick(inputs);
+    if (decision.play) {
+        const audio::Melody& melody = glucoseAlarm_.melodyFor(decision.kind);
+        platform::IAudioOutput* speaker = platform_.audio();
+        const bool played =
+            speaker != nullptr && speaker->playMelody(melody, glucoseAlarm_.volumePercent());
+        glucoseAlarm_.notePlayed(played, nowMillis);
+        if (played) {
+            // A little past the melody: the driver still holds a few frames.
+            glucoseAlarm_.holdSpeaker(nowMillis +
+                                      static_cast<std::uint64_t>(melody.totalMillis()) + 250u);
+        }
+        if (decision.fresh) {
+            std::string line = "glucose alarm: ";
+            line += apps::glucose::alarmKindName(decision.kind);
+            if (!played) {
+                line += " (could not play - no speaker)";
+            }
+            logger_.warn(nowMillis, line);
+        }
+        takeScreenForAlarm(nowMillis);
+    }
+    sharedSpeaker_.holdUntil(glucoseAlarm_.speakerHeldUntil());
+
+    // Drawing follows the alarm even on a dark panel, where nothing else asks
+    // for frames: the reading has to appear when it starts, keep up while it
+    // sounds, and go when it stops.
+    const bool sounding = glucoseAlarm_.sounding();
+    if (sounding != glucoseAlarmWasSounding_) {
+        glucoseAlarmWasSounding_ = sounding;
+        scheduler_.invalidate();
+    }
+    if (sounding && (glucoseSource_.revision() != lastGlucoseRevision_ ||
+                     apps::glucoseChanged(lastClockMillis_, nowMillis))) {
+        lastGlucoseRevision_ = glucoseSource_.revision();
+        scheduler_.invalidate();
+    }
+}
+
+void ApplicationHost::takeScreenForAlarm(std::uint64_t nowMillis) {
+    if (splashActive_) {
+        dismissSplash();
+        mapper_.reset();
+    }
+    if (navigator_.inSettings()) {
+        navigator_.exitSettings();
+    }
+    const bool pinnedHere = carousel_.isPinned() && carousel_.pinnedId() == kGlucoseAppId;
+    if (!pinnedHere) {
+        const app::App* showing = carousel_.active();
+        if (showing == nullptr || showing->id != kGlucoseAppId) {
+            transitionDirection_ = render::TransitionDirection::Forward;
+            carousel_.activate(kGlucoseAppId, nowMillis);
+        }
+        carousel_.pin(kGlucoseAppId, nowMillis);
+    }
+    scheduler_.invalidate();
+}
+
+void ApplicationHost::snoozeGlucoseAlarm() {
+    if (!glucoseAlarm_.snooze(lastTickMillis_)) {
+        return;
+    }
+    // Quiet now, not at the end of the bar.
+    if (platform::IAudioOutput* speaker = platform_.audio()) {
+        speaker->stopMelody();
+    }
+    glucoseAlarm_.holdSpeaker(0);
+    sharedSpeaker_.holdUntil(0);
+
+    adjustmentShownUntilMillis_ = lastTickMillis_ + kSnoozeReadoutMillis;
+    adjustmentIsSnooze_ = true;
+    adjustmentIsVolume_ = false;
+    adjustmentIsFace_ = false;
+    logger_.info(lastTickMillis_, "glucose alarm snoozed");
     scheduler_.invalidate();
 }
 
@@ -1151,9 +1300,12 @@ void ApplicationHost::announceNotification() {
     }
     announcedSequence_ = alert->sequence;
 
-    platform::IAudioOutput* speaker = platform_.audio();
+    platform::IAudioOutput* speaker = platform_.audio() != nullptr ? &sharedSpeaker_ : nullptr;
     if (speaker == nullptr) {
         return;  // no speaker: silently, because absence is reported at boot
+    }
+    if (sharedSpeaker_.held()) {
+        return;  // an alarm is playing; a chime over it is the wrong news
     }
 
     // A notification may name its own sound; otherwise the configured default
@@ -1176,7 +1328,7 @@ void ApplicationHost::tickTheClock() {
         return;
     }
 
-    platform::IAudioOutput* speaker = platform_.audio();
+    platform::IAudioOutput* speaker = platform_.audio() != nullptr ? &sharedSpeaker_ : nullptr;
     if (speaker == nullptr) {
         return;
     }
@@ -1392,6 +1544,29 @@ void ApplicationHost::renderAdjustment(Canvas& canvas) const {
     // settings layout means one visual language for adjustment on this device:
     // whatever is being changed, it reads the same whether you got there by
     // holding the knob or by tapping a button.
+    if (adjustmentIsSnooze_) {
+        canvas.fillRect(Framebuffer::bounds(), colors::kBlack);
+        text::TextStyle label;
+        label.font = &text::font5x7();
+        label.color = colors::kWhite;
+        label.hAlign = text::HAlign::Left;
+        label.vAlign = text::VAlign::Top;
+        text::draw(canvas, "SNOOZE", Rect{1, 0, Framebuffer::kWidth - 2, 7}, label);
+        // Eight 5x7 glyphs fill the panel: "120 MIN" fits, and "until it
+        // leaves the range" has to be said in fewer.
+        char value[10] = {};
+        const int minutes = glucoseAlarm_.snoozeMinutes();
+        if (minutes == 0) {
+            std::snprintf(value, sizeof value, "TIL OK");
+        } else {
+            std::snprintf(value, sizeof value, "%d MIN", minutes);
+        }
+        text::TextStyle reading = label;
+        reading.color = colors::kCyan;
+        text::draw(canvas, value, Rect{1, 8, Framebuffer::kWidth - 2, 7}, reading);
+        return;
+    }
+
     const bool volume = adjustmentIsVolume_;
     const bool face = adjustmentIsFace_;
 
@@ -1457,6 +1632,7 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
         return false;
     }
     lastTickMillis_ = nowMillis;
+    sharedSpeaker_.setNow(nowMillis);
 
     if (!ticking_) {
         ticking_ = true;
@@ -1747,6 +1923,7 @@ bool ApplicationHost::tick(std::uint64_t nowMillis) {
         glucoseSource_.setNetworkUp(networkUp);
         glucoseSource_.tick(nowMillis, systemClock.unixSeconds(), systemClock.wallClockValid(),
                             currentUtcOffsetSeconds());
+        tickGlucoseAlarm(nowMillis);
         fetcher_.setNetworkUp(networkUp);
         fetcher_.tick(nowMillis);
     }
@@ -2014,6 +2191,18 @@ void ApplicationHost::renderFrame(std::uint64_t nowMillis) {
     // dark rather than freezing on whatever was last drawn. Safe mode is checked
     // first on purpose: a stored `power: false` must never be able to hide the
     // reason the device ended up in safe mode.
+    // A sounding alarm shows its reading even on a switched-off panel and over
+    // a notification: an alarm about a number nobody can see is half an alarm.
+    // Drawn, not switched on - display.power is never written.
+    if (glucoseAlarm_.sounding() &&
+        (!settings_.display.power || notifications_.active() != nullptr)) {
+        const apps::glucose::Reading& reading = glucoseSource_.reading();
+        apps::renderGlucose(canvas, reading,
+                            reading.stale() ? apps::GlucoseFace::NoData
+                                            : apps::glucoseFaceFromName(settings_.glucose.face));
+        return;
+    }
+
     if (!settings_.display.power) {
         return;
     }

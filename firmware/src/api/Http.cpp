@@ -195,6 +195,11 @@ RouteMatch matchRoute(std::string_view path) {
         return match;
     }
 
+    if (parts.size() == 5 && head == "glucose" && parts[3] == "alarm" && parts[4] == "test") {
+        match.resource = Resource::GlucoseAlarmTest;
+        return match;
+    }
+
     if (parts.size() == 4) {
         if (head == "system" && parts[3] == "reboot") {
             match.resource = Resource::SystemReboot;

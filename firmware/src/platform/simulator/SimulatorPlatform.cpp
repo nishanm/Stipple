@@ -148,6 +148,17 @@ void SimulatorAudio::stop() {
     ++stopCount_;
 }
 
+bool SimulatorAudio::playMelody(const audio::Melody& melody, int levelPercent) {
+    if (melody.count <= 0) {
+        return false;
+    }
+    MelodyRequest request;
+    request.melody = melody;
+    request.levelPercent = levelPercent;
+    melodies_.push_back(request);
+    return true;
+}
+
 // --- MQTT --------------------------------------------------------------------
 
 void SimulatorMqtt::setState(MqttState state) {

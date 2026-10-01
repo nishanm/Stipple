@@ -10,7 +10,9 @@
 #include "stipple/asset/IconStore.h"
 #include "stipple/script/IScriptRunner.h"
 #include "stipple/apps/ClockApp.h"
+#include "stipple/apps/GlucoseAlarm.h"
 #include "stipple/apps/GlucoseSource.h"
+#include "stipple/audio/SharedSpeaker.h"
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/apps/SplashScreen.h"
 #include "stipple/config/Config.h"
@@ -166,6 +168,9 @@ public:
     void setScriptRunner(script::IScriptRunner* runner);
     script::IScriptRunner* scriptRunner() const noexcept { return scripts_; }
     config::Config& settings() noexcept { return settings_; }
+
+    /// The glucose alarm, for diagnostics and tests.
+    const apps::glucose::GlucoseAlarm& glucoseAlarm() const noexcept { return glucoseAlarm_; }
 
     /// Exposed so a settings UI can show what the controls currently do, rather
     /// than hard-coding a copy of the default mapping that then drifts.
@@ -379,6 +384,16 @@ private:
     /// Step the glucose face from the knob and show what happened.
     void stepGlucoseFace(int direction);
 
+    /// Run the glucose alarm for this tick: decide, play, take the screen.
+    void tickGlucoseAlarm(std::uint64_t nowMillis);
+
+    /// Show the glucose face for a sounding alarm: out of settings, past the
+    /// splash, onto glucose and pinned. Back can still leave.
+    void takeScreenForAlarm(std::uint64_t nowMillis);
+
+    /// The knob press while an alarm sounds.
+    void snoozeGlucoseAlarm();
+
     /// Copy the registry's current order back into settings, ready to persist.
     void rememberAppOrder();
 
@@ -442,6 +457,30 @@ private:
     /// came round to it.
     apps::glucose::NightscoutSource glucoseSource_;
 
+    /// The speaker alarm (Stage 4). Ticked whichever app is on screen, like
+    /// the source it reads.
+    apps::glucose::GlucoseAlarm glucoseAlarm_;
+
+    /// The speaker as notifications, the clock tick, the volume beep and
+    /// scripts see it: refused while the alarm holds it.
+    audio::SharedSpeaker sharedSpeaker_;
+
+    /// When the source became able to fetch (configured, wall clock valid),
+    /// so the no-data alarm can count from there when no sample ever came.
+    std::uint64_t glucoseFetchableSinceMillis_ = 0;
+
+    /// Whether the alarm was sounding last tick, so a change forces a frame.
+    bool glucoseAlarmWasSounding_ = false;
+
+    /// The knob's Down was taken as a snooze; its Up must not reach the
+    /// mapper as a press of its own.
+    bool swallowKnobRelease_ = false;
+
+    /// While an alarm sounds, the panel is never dimmer than this - brightness
+    /// and the night level may both be 0, and an alarm on a dark panel says
+    /// nothing about why it is sounding.
+    static constexpr std::uint8_t kAlarmBrightnessFloor = 16;
+
     /// The source revision last drawn, so a new reading forces a frame.
     std::uint32_t lastGlucoseRevision_ = 0;
 
@@ -485,6 +524,10 @@ private:
     /// when the face itself cannot be seen - a stale reading always draws the
     /// no-data face, and a knob turn with nothing visible is a broken knob.
     bool adjustmentIsFace_ = false;
+
+    /// The readout is confirming a snooze.
+    bool adjustmentIsSnooze_ = false;
+    static constexpr std::uint64_t kSnoozeReadoutMillis = 2500;
 
     /// When the knob last changed the glucose face, or 0 once it is saved.
     std::uint64_t glucoseFaceDirtyMillis_ = 0;

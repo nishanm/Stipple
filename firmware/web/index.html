@@ -742,7 +742,7 @@
         <div class="row">
             <div class="field">
                 <label for="glucose-pollSeconds">Ask every</label>
-                <select id="glucose-pollSeconds" data-setting="glucose.pollSeconds">
+                <select id="glucose-pollSeconds" data-setting="glucose.pollSeconds" data-numeric="1">
                     <option value="30">30 seconds</option>
                     <option value="60">1 minute</option>
                     <option value="120">2 minutes</option>
@@ -763,6 +763,49 @@
                     whatever is chosen here.
                 </p>
             </div>
+        </div>
+
+        <h3 class="alarm-heading">Alarms</h3>
+        <p class="help warn-note" id="alarm-no-speaker" hidden>
+            This device has no working speaker, so no alarm can sound. The
+            settings below are kept, but nothing will be heard.
+        </p>
+        <p class="help">
+            Like nightscout-clock: each alarm has its own threshold, snooze,
+            alert windows and sound. Press the knob to snooze whichever is
+            sounding. The panel switches to the reading while an alarm sounds,
+            even when it is off or showing a notification.
+        </p>
+        <!-- One block per alarm, built by app.js from a single template. -->
+        <div id="glucose-alarms"></div>
+
+        <div class="row">
+            <div class="field">
+                <label for="alarm-repeatSeconds">Repeat every</label>
+                <select id="alarm-repeatSeconds" data-setting="glucose.alarms.repeatSeconds"
+                        data-numeric="1">
+                    <option value="60">1 minute</option>
+                    <option value="120">2 minutes</option>
+                    <option value="300">5 minutes</option>
+                </select>
+                <p class="help">Until snoozed. Intensive mode overrides this.</p>
+            </div>
+            <div class="field">
+                <label for="alarm-volumePercent">Alarm volume
+                    <output id="alarm-volumePercent-out"></output>%</label>
+                <input type="range" id="alarm-volumePercent" min="20" max="100" step="5"
+                       data-setting="glucose.alarms.volumePercent">
+                <p class="help">
+                    Separate from the device volume: − and + never make an
+                    alarm quieter. To silence one, turn it off.
+                </p>
+            </div>
+        </div>
+        <div class="field">
+            <label class="switch">
+                <input type="checkbox" id="alarm-intensive" data-setting="glucose.alarms.intensive">
+                <span>Intensive &mdash; sound again two seconds after each melody until snoozed</span>
+            </label>
         </div>
     </div>
 </div>

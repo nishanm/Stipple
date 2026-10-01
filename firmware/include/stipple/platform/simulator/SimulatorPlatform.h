@@ -138,13 +138,29 @@ public:
     void setVolume(std::uint8_t volume) override { volume_ = volume; }
     std::uint8_t volume() const override { return volume_; }
 
+    /// A melody asked for, and the level it was asked at.
+    struct MelodyRequest {
+        audio::Melody melody;
+        int levelPercent = 0;
+    };
+
+    bool playMelody(const audio::Melody& melody, int levelPercent) override;
+    void stopMelody() override { ++melodyStopCount_; }
+
     const std::vector<Request>& requests() const { return requests_; }
+    const std::vector<MelodyRequest>& melodies() const { return melodies_; }
     std::uint32_t stopCount() const { return stopCount_; }
-    void clear() { requests_.clear(); }
+    std::uint32_t melodyStopCount() const { return melodyStopCount_; }
+    void clear() {
+        requests_.clear();
+        melodies_.clear();
+    }
 
 private:
     std::vector<Request> requests_;
+    std::vector<MelodyRequest> melodies_;
     std::uint32_t stopCount_ = 0;
+    std::uint32_t melodyStopCount_ = 0;
     std::uint8_t volume_ = 128;
 };
 

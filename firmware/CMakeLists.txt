@@ -183,6 +183,7 @@ add_library(stipple_core
     src/input/SetupHold.cpp
     src/json/Json.cpp
     src/scene/Scene.cpp
+    src/audio/Melody.cpp
     src/audio/Tone.cpp
     src/time/Timezone.cpp
     src/net/DhcpClient.cpp
@@ -204,6 +205,7 @@ add_library(stipple_core
     src/apps/ClockApp.cpp
     src/apps/GlucoseApp.cpp
     src/apps/GlucoseFont.cpp
+    src/apps/GlucoseAlarm.cpp
     src/apps/GlucoseSource.cpp
     src/apps/StopwatchApp.cpp
     src/apps/VisualizerApp.cpp
@@ -215,6 +217,7 @@ add_library(stipple_core
     src/app/AppRegistry.cpp
     src/app/Carousel.cpp
     src/config/Config.cpp
+    src/config/GlucoseAlarmSettings.cpp
     src/api/Http.cpp
     src/api/JsonWriter.cpp
     src/api/ApiServer.cpp

@@ -20,7 +20,9 @@
 #include "stipple/script/IScriptRunner.h"
 #include "stipple/app/Carousel.h"
 #include "stipple/apps/ClockApp.h"
+#include "stipple/apps/GlucoseAlarm.h"
 #include "stipple/apps/GlucoseApp.h"
+#include "stipple/audio/Melody.h"
 #include "stipple/apps/GlucoseSource.h"
 #include "stipple/apps/VisualizerApp.h"
 #include "stipple/config/Config.h"
@@ -201,6 +203,7 @@ void writeSettings(JsonWriter& writer, const config::Config& settings) {
         .member("pollSeconds", static_cast<std::int64_t>(settings.glucose.pollSeconds))
         .member("face", settings.glucose.face)
         .member("pinned", settings.glucose.pinned)
+        .rawMember("alarms", config::alarmSettingsJson(settings.glucose.alarms))
         .endObject()
         .endObject();
 }
@@ -290,6 +293,7 @@ Response ApiServer::handle(const Request& request, std::uint64_t nowMillis) {
         case Resource::SystemFirmware: return handleFirmware(request);
         case Resource::DisplayFrame: return handleDisplayFrame(request);
         case Resource::Input: return handleInput(request, nowMillis);
+        case Resource::GlucoseAlarmTest: return handleGlucoseAlarmTest(request, nowMillis);
         case Resource::Unknown: break;
     }
     return notFound("no such endpoint");
@@ -317,6 +321,72 @@ Response ApiServer::handleDisplayFrame(const Request& request) {
         .member("height", Framebuffer::kHeight)
         .member("format", "rgb888")
         .member("pixels", base64::encode(frame.bytes(), Framebuffer::kByteSize))
+        .endObject();
+    return ok(writer.take());
+}
+
+Response ApiServer::handleGlucoseAlarmTest(const Request& request, std::uint64_t nowMillis) {
+    if (request.method != Method::Post) {
+        return methodNotAllowed();
+    }
+    if (context_.glucoseAlarm == nullptr) {
+        return notFound("this build has no glucose alarm");
+    }
+    platform::IAudioOutput* speaker =
+        context_.platform != nullptr ? context_.platform->audio() : nullptr;
+    if (speaker == nullptr) {
+        return error(409, "no_speaker", "this device has no speaker");
+    }
+    // A test must never replace or talk over a real alarm.
+    if (context_.glucoseAlarm->sounding()) {
+        return error(409, "alarm_sounding", "an alarm is sounding; snooze it first");
+    }
+
+    Body body(request.body, options_.maxJsonTokens, options_.maxBodyBytes);
+    if (!body.valid()) {
+        return badRequest(std::string("invalid JSON: ") + body.errorText());
+    }
+    const json::Value root = body.root();
+    if (!root.isObject()) {
+        return badRequest("body must be a JSON object");
+    }
+
+    // Either a melody as typed (the page's unsaved field), or a configured
+    // alarm by name - what will actually sound.
+    audio::Melody melody;
+    if (const json::Value text = root["melody"]; text.isString()) {
+        const audio::RtttlError parsed = audio::parseRtttl(text.toString(), melody);
+        if (parsed != audio::RtttlError::None) {
+            return unprocessable(std::string("'melody': ") + audio::describe(parsed));
+        }
+    } else if (const json::Value name = root["alarm"]; name.isString()) {
+        apps::glucose::AlarmKind kind = apps::glucose::AlarmKind::None;
+        for (const apps::glucose::AlarmKind each :
+             {apps::glucose::AlarmKind::UrgentLow, apps::glucose::AlarmKind::Low,
+              apps::glucose::AlarmKind::High, apps::glucose::AlarmKind::NoData}) {
+            if (name.stringEquals(apps::glucose::alarmKindName(each))) {
+                kind = each;
+            }
+        }
+        if (kind == apps::glucose::AlarmKind::None) {
+            return unprocessable("'alarm' must be urgentLow, low, high or noData");
+        }
+        melody = context_.glucoseAlarm->melodyFor(kind);
+    } else {
+        return unprocessable("give 'melody' (RTTTL) or 'alarm' (urgentLow, low, high, noData)");
+    }
+
+    if (!speaker->playMelody(melody, context_.glucoseAlarm->volumePercent())) {
+        return serverError("the speaker refused the melody");
+    }
+    context_.glucoseAlarm->holdSpeaker(nowMillis +
+                                       static_cast<std::uint64_t>(melody.totalMillis()) + 250u);
+
+    JsonWriter writer;
+    writer.beginObject()
+        .member("playing", true)
+        .member("millis", melody.totalMillis())
+        .member("volumePercent", context_.glucoseAlarm->volumePercent())
         .endObject();
     return ok(writer.take());
 }
@@ -663,6 +733,25 @@ Response ApiServer::handleDiagnostics(const Request& request, std::uint64_t nowM
             .member("samples", static_cast<std::int64_t>(status.sampleCount))
             .member("fatalStreak", static_cast<std::int64_t>(status.fatalStreak))
             .member("holdSeconds", holdSeconds)
+            .endObject();
+    }
+
+    if (context_.glucoseAlarm != nullptr) {
+        const apps::glucose::GlucoseAlarm& alarm = *context_.glucoseAlarm;
+        const std::uint64_t lastPlay = alarm.lastPlayMillis();
+        const char* state = alarm.sounding() ? "sounding" : alarm.snoozed() ? "snoozed" : "quiet";
+        writer.key("alarm").beginObject()
+            .member("state", state)
+            .member("kind", apps::glucose::alarmKindName(alarm.active()))
+            .member("snoozedSeconds", alarm.snoozeRemainingSeconds(nowMillis))
+            .member("lastPlayAgeSeconds",
+                    lastPlay > 0 && nowMillis >= lastPlay
+                        ? static_cast<std::int64_t>((nowMillis - lastPlay) / 1000u)
+                        : static_cast<std::int64_t>(-1))
+            .member("plays", static_cast<std::int64_t>(alarm.plays()))
+            .member("playFailures", static_cast<std::int64_t>(alarm.playFailures()))
+            .member("melodyFallbacks", static_cast<std::int64_t>(alarm.melodyFallbacks()))
+            .member("speaker", context_.platform != nullptr && context_.platform->audio() != nullptr)
             .endObject();
     }
 
@@ -1893,6 +1982,14 @@ Response ApiServer::handleSettings(const Request& request) {
                 return unprocessable("'glucose.pinned' must be true or false");
             }
             updated.glucose.pinned = value.toBool(true);
+        }
+        // The alarm block is validated whole, strictly, onto the copy: one
+        // wrong field refuses the request and changes nothing.
+        if (const json::Value value = glucose["alarms"]; value.valid()) {
+            std::string error;
+            if (!config::applyAlarmSettings(value, updated.glucose.alarms, error)) {
+                return unprocessable(error);
+            }
         }
     }
 

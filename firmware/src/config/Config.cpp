@@ -269,6 +269,8 @@ std::string buildBody(const Config& config) {
     appendEscaped(body, config.glucose.face);
     body += ",\"pinned\":";
     body += config.glucose.pinned ? "true" : "false";
+    body += ",\"alarms\":";
+    body += alarmSettingsJson(config.glucose.alarms);
     body += '}';
 
     body += '}';
@@ -311,8 +313,12 @@ bool ConfigStore::deserialize(std::string_view payload,
     fromSchemaVersion = 0;
     futureSchema = false;
 
-    json::Token tokens[kMaxTokens];
-    json::Document document(tokens, kMaxTokens);
+    // On the heap since the budget doubled for the glucose alarm: 24 KB is
+    // nothing to Linux's main thread but a third of the browser emulator's
+    // default stack. Load and restore are not the render path, so allocating
+    // here costs nothing that §38 protects.
+    std::vector<json::Token> tokens(static_cast<std::size_t>(kMaxTokens));
+    json::Document document(tokens.data(), kMaxTokens);
     if (document.parse(payload) != json::Error::None) {
         return false;
     }
@@ -456,6 +462,10 @@ bool ConfigStore::deserialize(std::string_view payload,
         clampPollSeconds(glucose["pollSeconds"].toInt(parsed.glucose.pollSeconds));
     parsed.glucose.face = glucose["face"].toString(parsed.glucose.face);
     parsed.glucose.pinned = glucose["pinned"].toBool(parsed.glucose.pinned);
+    // Forgiving, like the rest of this function: an alarm that fails today's
+    // rules comes back as its default, never as silence and never as a load
+    // failure that costs every other setting.
+    loadAlarmSettings(glucose["alarms"], parsed.glucose.alarms);
 
     const json::Value clock = body["clock"];
     parsed.clock.twentyFourHour = clock["twentyFourHour"].toBool(parsed.clock.twentyFourHour);

@@ -99,6 +99,7 @@ get back in.
 | `GET /logs` | The ring buffer |
 | `GET /display/frame` | The frame currently on the panel |
 | `POST /input` | Inject a button press |
+| `POST /glucose/alarm/test` | Play a glucose alarm melody now: `{"melody":"<rtttl>"}` or `{"alarm":"urgentLow"}`; `409` while a real alarm sounds |
 | `GET POST /apps` | List, add |
 | `GET PUT PATCH DELETE /apps/{id}` | One app |
 | `POST /apps/{id}/activate` | Show it now |

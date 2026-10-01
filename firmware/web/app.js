@@ -199,6 +199,7 @@
             // Not a data-setting control: the password half is write-only, so
             // the pair cannot round-trip through the generic binding.
             showAccess(settings);
+            showAlarms();
         });
     }
 
@@ -411,6 +412,261 @@
                     toast(updated.glucose.apiSecretSet ? 'Secret saved' : 'Secret cleared');
                 })
                 .catch(fail);
+        });
+    }
+
+    // --- glucose alarms ------------------------------------------------------
+    //
+    // Four blocks from one template, built before bindControls() so their
+    // fields bind like any other data-setting control. The alert windows and
+    // the sound presets are the two parts that are not one control to one
+    // setting, and are wired by hand below.
+
+    var ALARMS = [
+        { key: 'urgentLow', title: 'Urgent low', threshold: 'Sound at or below (mg/dL)',
+          until: 'Until it is above the threshold' },
+        { key: 'low', title: 'Low', threshold: 'Sound below (mg/dL)',
+          until: 'Until it is back in range' },
+        { key: 'high', title: 'High', threshold: 'Sound at or above (mg/dL)',
+          until: 'Until it is back in range' },
+        { key: 'noData', title: 'No data', threshold: null,
+          until: 'Until a reading arrives' }
+    ];
+
+    // nightscout-clock's defaults and settings-page presets, verbatim, so a
+    // melody copied from one of the clocks sounds the same here.
+    var DEFAULT_MELODY = {
+        urgentLow: 'urgent_low:d=4,o=5,b=230:4e6,4p,4e6,4p,4e6,4p,4e6',
+        low: 'low:d=4,o=5,b=200:4e5,4p,4e5,4p,4e5',
+        high: 'high:d=4,o=5,b=125:4e7,p,4e7',
+        noData: 'doublebeep:d=8,o=6,b=180:c,p,c'
+    };
+    var ALARM_SOUNDS = [
+        ['doublebeep', 'Double beep', 'doublebeep:d=8,o=6,b=180:c,p,c'],
+        ['triplebeep', 'Triple beep', 'triplebeep:d=16,o=6,b=200:c,p,c,p,c'],
+        ['siren', 'Two tone siren', 'siren:d=4,o=5,b=100:a,d6,a,d6'],
+        ['urgent', 'Urgent pulse', 'urgent:d=32,o=7,b=220:c,p,c,p,c,p,c,p,c,p,c'],
+        ['ping', 'Soft ping', 'ping:d=4,o=6,b=140:8e,16p,8c'],
+        ['longtone', 'Long tone', 'longtone:d=1,o=5,b=90:a']
+    ];
+    var DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    var DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
+                     'Saturday'];
+
+    function escapeHtml(text) {
+        return String(text).replace(/[&<>"]/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+        });
+    }
+
+    function alarmBlock(alarm) {
+        var k = alarm.key;
+        var id = 'alarm-' + k;
+        var html = '<div class="alarm" data-alarm="' + k + '">';
+        html += '<div class="row alarm-head">' +
+            '<label class="switch"><input type="checkbox" id="' + id + '-enabled"' +
+            ' data-setting="glucose.alarms.' + k + '.enabled"><span>' +
+            escapeHtml(alarm.title) + '</span></label>' +
+            '<button class="btn" type="button" data-alarm-try="' + k + '">Try</button></div>';
+
+        html += '<div class="row">';
+        if (alarm.threshold) {
+            html += '<div class="field"><label for="' + id + '-mgdl">' +
+                escapeHtml(alarm.threshold) + '</label>' +
+                '<input type="number" id="' + id + '-mgdl" min="30" max="399" step="1"' +
+                ' data-setting="glucose.alarms.' + k + '.mgdl"></div>';
+        } else {
+            html += '<div class="field"><label for="' + id + '-minutes">After no reading for</label>' +
+                '<select id="' + id + '-minutes" data-numeric="1"' +
+                ' data-setting="glucose.alarms.noData.minutes">' +
+                '<option value="20">20 minutes</option><option value="30">30 minutes</option>' +
+                '<option value="45">45 minutes</option><option value="60">1 hour</option>' +
+                '</select></div>';
+        }
+        html += '<div class="field"><label for="' + id + '-snooze">Snooze for</label>' +
+            '<select id="' + id + '-snooze" data-numeric="1"' +
+            ' data-setting="glucose.alarms.' + k + '.snoozeMinutes">';
+        [5, 10, 15, 30, 60, 120].forEach(function (m) {
+            html += '<option value="' + m + '">' +
+                (m < 60 ? m + ' minutes' : (m / 60) + (m === 60 ? ' hour' : ' hours')) +
+                '</option>';
+        });
+        html += '<option value="0">' + escapeHtml(alarm.until) + '</option></select></div>';
+        html += '</div>';
+
+        html += '<div class="field"><label for="' + id + '-melody">Alert sound</label>' +
+            '<div class="row"><select data-alarm-preset="' + k + '" aria-label="Sound preset">' +
+            '<option value="default">Default</option>';
+        ALARM_SOUNDS.forEach(function (p) {
+            html += '<option value="' + p[0] + '">' + escapeHtml(p[1]) + '</option>';
+        });
+        html += '<option value="custom">Custom</option></select>' +
+            '<input type="text" id="' + id + '-melody" maxlength="256" spellcheck="false"' +
+            ' autocomplete="off" data-setting="glucose.alarms.' + k + '.melody"></div>' +
+            '<p class="help">A preset, or any RTTTL melody up to ten seconds - the same' +
+            ' format as the clocks.</p></div>';
+
+        html += '<div class="field"><label>Alert windows</label>' +
+            '<div class="alarm-windows" data-alarm-windows="' + k + '"></div>' +
+            '<button class="btn" type="button" data-alarm-add="' + k + '">Add window</button>' +
+            '<p class="help">Empty: it may sound at any time. With windows, only inside' +
+            ' one. A window whose end is earlier than its start runs past midnight; the' +
+            ' days are the days it starts on.</p>';
+        if (k === 'urgentLow') {
+            html += '<p class="help warn-note">A window here can keep an urgent low quiet' +
+                ' at night. Leave it empty unless that is what you mean.</p>';
+        }
+        html += '</div></div>';
+        return html;
+    }
+
+    function buildAlarms() {
+        var holder = $('glucose-alarms');
+        if (!holder) { return; }
+        holder.innerHTML = ALARMS.map(alarmBlock).join('');
+    }
+
+    function presetFor(key, melody) {
+        if (melody === DEFAULT_MELODY[key]) { return 'default'; }
+        for (var i = 0; i < ALARM_SOUNDS.length; ++i) {
+            if (ALARM_SOUNDS[i][2] === melody) { return ALARM_SOUNDS[i][0]; }
+        }
+        return 'custom';
+    }
+
+    function minutesToTime(minutes) {
+        var h = Math.floor(minutes / 60);
+        var m = minutes % 60;
+        return (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m;
+    }
+
+    function windowRow(window) {
+        var row = document.createElement('div');
+        row.className = 'row alarm-window';
+        var days = '<span class="alarm-days" role="group" aria-label="Days it starts on">';
+        for (var d = 0; d < 7; ++d) {
+            var on = window && window.days.indexOf(String(d)) >= 0;
+            days += '<label title="' + DAY_NAMES[d] + '"><input type="checkbox" value="' + d +
+                '"' + (on ? ' checked' : '') + '>' + DAY_LETTERS[d] + '</label>';
+        }
+        days += '</span>';
+        row.innerHTML = days +
+            '<input type="time" class="alarm-from" aria-label="From" value="' +
+            escapeHtml(window ? window.from : '22:00') + '">' +
+            '<input type="time" class="alarm-to" aria-label="To" value="' +
+            escapeHtml(window ? window.to : '07:00') + '">' +
+            '<button class="btn btn-move" type="button" aria-label="Remove window">&times;</button>';
+        return row;
+    }
+
+    function renderWindows(key) {
+        var holder = document.querySelector('[data-alarm-windows="' + key + '"]');
+        if (!holder) { return; }
+        holder.innerHTML = '';
+        var list = pathGet(settings, 'glucose.alarms.' + key + '.windows') || [];
+        list.forEach(function (w) { holder.appendChild(windowRow(w)); });
+    }
+
+    // The whole list goes in one PATCH, as the API expects. A half-filled row
+    // (no day ticked, or the same time twice) is not sent: the device would
+    // refuse it, and a refused save would throw away the row being typed.
+    function saveWindows(key) {
+        var holder = document.querySelector('[data-alarm-windows="' + key + '"]');
+        var windows = [];
+        var complete = true;
+        Array.prototype.forEach.call(holder.querySelectorAll('.alarm-window'), function (row) {
+            var days = '';
+            Array.prototype.forEach.call(row.querySelectorAll('input[type="checkbox"]'),
+                function (box) { if (box.checked) { days += box.value; } });
+            var from = row.querySelector('.alarm-from').value;
+            var to = row.querySelector('.alarm-to').value;
+            if (!days || !from || !to || from === to) {
+                complete = false;
+                return;
+            }
+            windows.push({ days: days, from: from, to: to });
+        });
+        if (!complete) {
+            toast('Pick at least one day and two different times', true);
+            return;
+        }
+        var body = { glucose: { alarms: {} } };
+        body.glucose.alarms[key] = { windows: windows };
+        send('PATCH', '/api/v1/settings', body)
+            .then(function (updated) {
+                settings = updated;
+                toast('Saved');
+            })
+            .catch(function (error) {
+                renderWindows(key);
+                fail(error);
+            });
+    }
+
+    function showAlarms() {
+        ALARMS.forEach(function (alarm) {
+            renderWindows(alarm.key);
+            var preset = document.querySelector('[data-alarm-preset="' + alarm.key + '"]');
+            var melody = pathGet(settings, 'glucose.alarms.' + alarm.key + '.melody');
+            if (preset && melody !== undefined) {
+                preset.value = presetFor(alarm.key, melody);
+            }
+        });
+        send('GET', '/api/v1/diagnostics')
+            .then(function (diagnostics) {
+                var banner = $('alarm-no-speaker');
+                if (banner) {
+                    banner.hidden = !(diagnostics && diagnostics.alarm &&
+                                      diagnostics.alarm.speaker === false);
+                }
+            })
+            .catch(function () { /* the status tiles report a lost device */ });
+    }
+
+    function wireAlarms() {
+        ALARMS.forEach(function (alarm) {
+            var k = alarm.key;
+            var melody = $('alarm-' + k + '-melody');
+            var preset = document.querySelector('[data-alarm-preset="' + k + '"]');
+            var holder = document.querySelector('[data-alarm-windows="' + k + '"]');
+            if (!melody || !preset || !holder) { return; }
+
+            preset.addEventListener('change', function () {
+                if (preset.value === 'custom') {
+                    melody.focus();
+                    return;
+                }
+                var text = DEFAULT_MELODY[k];
+                ALARM_SOUNDS.forEach(function (p) { if (p[0] === preset.value) { text = p[2]; } });
+                melody.value = text;
+                applySetting(melody);
+            });
+            melody.addEventListener('input', function () {
+                preset.value = presetFor(k, melody.value.trim());
+            });
+
+            // What it will sound like: the field as typed, saved or not.
+            document.querySelector('[data-alarm-try="' + k + '"]')
+                .addEventListener('click', function () {
+                    send('POST', '/api/v1/glucose/alarm/test', { melody: melody.value.trim() })
+                        .then(function (answer) {
+                            toast('Playing - ' + (answer.millis / 1000).toFixed(1) + ' s at ' +
+                                  answer.volumePercent + '%');
+                        })
+                        .catch(fail);
+                });
+
+            document.querySelector('[data-alarm-add="' + k + '"]')
+                .addEventListener('click', function () {
+                    holder.appendChild(windowRow(null));
+                });
+            holder.addEventListener('change', function () { saveWindows(k); });
+            holder.addEventListener('click', function (event) {
+                if (event.target.classList.contains('btn-move')) {
+                    event.target.closest('.alarm-window').remove();
+                    saveWindows(k);
+                }
+            });
         });
     }
 
@@ -2931,12 +3187,14 @@
     function start() {
         fillOffsets();
         fillZones();
+        buildAlarms();
         bindControls();
         wireNight();
         wireTabs();
         wireNotify();
         wireMqtt();
         wireGlucose();
+        wireAlarms();
         wireIcons();
         wireScripts();
         wireReboot();

@@ -18,6 +18,7 @@ class Carousel;
 
 namespace apps {
 namespace glucose {
+class GlucoseAlarm;
 class NightscoutSource;
 }
 }  // namespace apps
@@ -110,6 +111,10 @@ struct ApiContext {
     /// status, the last failure. Never its URL and never its credential. Null
     /// omits the section.
     const apps::glucose::NightscoutSource* glucose = nullptr;
+
+    /// The glucose alarm: its state for diagnostics, and the speaker hold a
+    /// test melody takes. Null omits both and refuses the test endpoint.
+    apps::glucose::GlucoseAlarm* glucoseAlarm = nullptr;
 };
 
 struct ApiOptions {
@@ -253,6 +258,7 @@ private:
 
     Response handleDisplayFrame(const Request& request);
     Response handleInput(const Request& request, std::uint64_t nowMillis);
+    Response handleGlucoseAlarmTest(const Request& request, std::uint64_t nowMillis);
 
     ApiContext context_;
     ApiOptions options_;

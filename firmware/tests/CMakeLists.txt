@@ -22,6 +22,9 @@ add_executable(stipple_tests
     test_host.cpp
     test_clock.cpp
     test_glucose.cpp
+    test_glucose_alarm.cpp
+    test_glucose_alarm_host.cpp
+    test_melody.cpp
     test_glucose_source.cpp
     test_glucose_settings.cpp
     test_icons.cpp

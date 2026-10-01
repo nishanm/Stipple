@@ -148,6 +148,9 @@ enum class Resource : std::uint8_t {
     DisplayFrame,
     /// A button press injected from somewhere that is not the hardware.
     Input,
+    /// Play a glucose alarm melody now, so a settings page can let somebody
+    /// hear what they chose. POST /api/v1/glucose/alarm/test.
+    GlucoseAlarmTest,
 };
 
 struct RouteMatch {

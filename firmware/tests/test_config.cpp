@@ -430,6 +430,20 @@ STIPPLE_TEST(Config, TokenBudgetHasHeadroom) {
         config.apps.order.push_back(std::move(preference));
     }
 
+    // And every glucose alarm with its full eight alert windows and the
+    // longest melody text allowed - the other large part of a real document.
+    for (stipple::config::AlarmRule* rule :
+         {&config.glucose.alarms.urgentLow, &config.glucose.alarms.low,
+          &config.glucose.alarms.high, &config.glucose.alarms.noData}) {
+        rule->windowCount = stipple::config::AlarmRule::kMaxWindows;
+        for (int i = 0; i < rule->windowCount; ++i) {
+            rule->windows[i].dayMask = 0x7F;
+            rule->windows[i].fromMinutes = 22 * 60;
+            rule->windows[i].toMinutes = 7 * 60;
+        }
+        rule->melody = std::string(256, 'c');
+    }
+
     const std::string payload = ConfigStore::serialize(config);
 
     // Find what a maximal document actually costs, by parsing it at rising

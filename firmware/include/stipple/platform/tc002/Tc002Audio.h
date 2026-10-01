@@ -3,6 +3,7 @@
 
 #include <cstdint>
 
+#include "stipple/audio/Melody.h"
 #include "stipple/audio/Tone.h"
 #include "stipple/platform/PlatformServices.h"
 
@@ -77,6 +78,11 @@ public:
     void setVolume(std::uint8_t volume) override;
     std::uint8_t volume() const override { return volume_; }
 
+    /// The alarm path. Takes the speaker from any tone in progress, and while
+    /// it plays, tones and named sounds are refused and stop() leaves it be.
+    bool playMelody(const audio::Melody& melody, int levelPercent) override;
+    void stopMelody() override;
+
 private:
     /// Push one frame. Returns false when the driver would have to wait, which
     /// is the signal to stop until the next tick.
@@ -94,6 +100,7 @@ private:
     int (*disable_)(int) = nullptr;
 
     audio::ToneGenerator tone_{kSampleRate};
+    audio::MelodyGenerator melody_{kSampleRate};
     std::uint8_t volume_ = 153;  // 60%, matching the config default
 
     std::int16_t samples_[kPointsPerFrame] = {};

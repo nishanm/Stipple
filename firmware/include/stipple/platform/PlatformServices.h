@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "stipple/audio/Melody.h"
 #include "stipple/platform/Clock.h"
 #include "stipple/platform/HttpClient.h"
 #include "stipple/platform/Display.h"
@@ -31,6 +32,24 @@ public:
 
     virtual void setVolume(std::uint8_t volume) = 0;
     virtual std::uint8_t volume() const = 0;
+
+    /// Play a melody at an absolute level, 0-100, that ignores setVolume().
+    ///
+    /// For the glucose alarm, which must be heard whatever − and + have done
+    /// to the volume. The melody is timed by the platform's own sample clock,
+    /// not by the main loop, and it is not interrupted by playTone,
+    /// playSound or stop(): only stopMelody() ends it early.
+    ///
+    /// Not pure, so a platform or test fake with no melody support compiles
+    /// unchanged and honestly answers false - the caller counts that as a
+    /// failed play rather than assuming a sound.
+    virtual bool playMelody(const audio::Melody& melody, int levelPercent) {
+        (void)melody;
+        (void)levelPercent;
+        return false;
+    }
+
+    virtual void stopMelody() {}
 };
 
 struct NetworkStatus {

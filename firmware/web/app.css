@@ -141,6 +141,8 @@ label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--muted)
 input[type="text"],
 input[type="number"],
 input[type="password"],
+input[type="url"],
+input[type="time"],
 select {
     width: 100%;
     padding: 8px 10px;
@@ -787,4 +789,28 @@ textarea.code:focus { outline: none; }
 .btn-danger:hover, .btn-danger:focus-visible {
     border-color: var(--danger);
     color: var(--danger);
+}
+
+/* --- glucose alarms -------------------------------------------------------- */
+
+.alarm-heading { margin: 28px 0 6px; font-size: 15px; }
+
+.alarm {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px 14px 4px;
+    margin: 12px 0;
+}
+.alarm-head { justify-content: space-between; margin-bottom: 10px; }
+
+.alarm-window { margin-bottom: 8px; gap: 10px; }
+.alarm-window input[type="time"] { flex: 0 1 120px; width: auto; color-scheme: dark; }
+.alarm-days { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.alarm-days label {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin: 0;
+    font-size: 12px;
+    color: var(--text);
 }

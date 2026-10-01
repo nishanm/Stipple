@@ -124,10 +124,15 @@ void Tc002Audio::close() noexcept {
     disableChn_ = nullptr;
     disable_ = nullptr;
     tone_.stop();
+    melody_.stop();
 }
 
 bool Tc002Audio::sendFrame() {
-    tone_.fill(samples_, kPointsPerFrame);
+    if (melody_.playing()) {
+        melody_.fill(samples_, kPointsPerFrame);
+    } else {
+        tone_.fill(samples_, kPointsPerFrame);
+    }
 
     std::memset(frame_, 0, sizeof(frame_));
     // eBitwidth and eSoundmode are the first two words and both zero here,
@@ -152,7 +157,7 @@ void Tc002Audio::tick() {
     // enough to stay ahead of the driver's six-frame buffer without ever
     // becoming the reason a frame was late.
     constexpr int kMaxFramesPerTick = 30;
-    for (int i = 0; i < kMaxFramesPerTick && tone_.playing(); ++i) {
+    for (int i = 0; i < kMaxFramesPerTick && (melody_.playing() || tone_.playing()); ++i) {
         if (!sendFrame()) {
             break;
         }
@@ -160,7 +165,9 @@ void Tc002Audio::tick() {
 }
 
 bool Tc002Audio::playTone(int frequencyHz, int durationMillis) {
-    if (!channelEnabled_) {
+    // An alarm is not cut off by a beep: ToneGenerator replaces what it is
+    // playing, so the refusal has to happen here.
+    if (!channelEnabled_ || melody_.playing()) {
         return false;
     }
     tone_.start(frequencyHz, durationMillis);
@@ -168,7 +175,7 @@ bool Tc002Audio::playTone(int frequencyHz, int durationMillis) {
 }
 
 bool Tc002Audio::playSound(std::string_view name) {
-    if (!channelEnabled_) {
+    if (!channelEnabled_ || melody_.playing()) {
         return false;
     }
 
@@ -204,9 +211,38 @@ bool Tc002Audio::playSound(std::string_view name) {
 
 void Tc002Audio::stop() {
     tone_.stop();
+    // A script's stop() is about its own beeps; an alarm melody carries on,
+    // buffered frames included.
+    if (melody_.playing()) {
+        return;
+    }
     if (channelEnabled_ && clearChnBuf_ != nullptr) {
         // Otherwise "stop" means "stop after whatever is already buffered",
         // which on a six-frame buffer is a noticeable tail.
+        clearChnBuf_(kDevice, kChannel);
+    }
+}
+
+bool Tc002Audio::playMelody(const audio::Melody& melody, int levelPercent) {
+    if (!channelEnabled_) {
+        return false;
+    }
+    tone_.stop();
+    // Whatever tone was already handed to the driver would play first and
+    // push the alarm back by up to its six-frame buffer.
+    if (clearChnBuf_ != nullptr) {
+        clearChnBuf_(kDevice, kChannel);
+    }
+    melody_.start(melody, levelPercent);
+    return melody_.playing();
+}
+
+void Tc002Audio::stopMelody() {
+    if (!melody_.playing()) {
+        return;
+    }
+    melody_.stop();
+    if (channelEnabled_ && clearChnBuf_ != nullptr) {
         clearChnBuf_(kDevice, kChannel);
     }
 }
