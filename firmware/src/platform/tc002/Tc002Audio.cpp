@@ -91,8 +91,25 @@ bool Tc002Audio::open() {
     attr.codecChnCnt = 0;
     attr.chnCnt = 1;
 
-    if (setPubAttr_(kDevice, &attr) != 0 || enable_(kDevice) != 0 ||
-        enableChn_(kDevice, kChannel) != 0) {
+    // The vendor application leaves the device enabled when it is stopped, and
+    // the driver then refuses new attributes with "not permitted"
+    // (0xa0052009) - seen on hardware 2026-10-01, the first /tmp trial after
+    // the stock app had been running for a day. With the stock app stopped
+    // this process is the only user, so releasing the device and trying once
+    // more is safe; refusing would leave a glucose alarm with no speaker.
+    if (setPubAttr_(kDevice, &attr) != 0) {
+        if (disableChn_ != nullptr) {
+            disableChn_(kDevice, kChannel);
+        }
+        if (disable_ != nullptr) {
+            disable_(kDevice);
+        }
+        if (setPubAttr_(kDevice, &attr) != 0) {
+            close();
+            return false;
+        }
+    }
+    if (enable_(kDevice) != 0 || enableChn_(kDevice, kChannel) != 0) {
         close();
         return false;
     }
