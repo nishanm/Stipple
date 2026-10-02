@@ -35,7 +35,30 @@
         throw error;
     }
 
-    async function send(method, path, body) {
+    // One request at a time. The clock serves a handful of connections and a
+    // page that fires six at once (a phone, a second tab, the panel view) can
+    // still lose some; queueing here costs nothing on a page this small.
+    let chain = Promise.resolve();
+    function send(method, path, body) {
+        const run = () => sendNow(method, path, body);
+        const result = chain.then(run, run);
+        chain = result.catch(() => {});
+        return result;
+    }
+
+    async function sendNow(method, path, body) {
+        try {
+            return await sendOnce(method, path, body);
+        } catch (e) {
+            // A read that never got an answer is safe to ask again once. A write
+            // is not retried: save() checks what the clock now holds instead.
+            if (!e.network || method !== 'GET') { throw e; }
+            await new Promise((resolve) => setTimeout(resolve, 400));
+            return sendOnce(method, path, body);
+        }
+    }
+
+    async function sendOnce(method, path, body) {
         if (bridge) {
             const result = await bridge(method, path, body === undefined ? '' : JSON.stringify(body));
             return decode(result.status, result.body);
@@ -45,7 +68,14 @@
             init.headers['Content-Type'] = 'application/json';
             init.body = JSON.stringify(body);
         }
-        const response = await fetch(path, init);
+        let response;
+        try {
+            response = await fetch(path, init);
+        } catch (e) {
+            const error = new Error('The clock did not answer.');
+            error.network = true;
+            throw error;
+        }
         return decode(response.status, await response.text());
     }
 
@@ -81,7 +111,7 @@
     function field(label, control, help) {
         const id = control.id || ('f' + Math.random().toString(36).slice(2, 9));
         control.id = id;
-        return h('div.field', {}, h('label', { for: id, text: label }), control,
+        return h('div.field', { 'data-path': control.dataset.path }, h('label', { for: id, text: label }), control,
             help ? h('p.help', { text: help }) : null);
     }
 
@@ -98,7 +128,7 @@
         node.className = 'toast notice ' + (bad ? 'bad' : 'ok');
         node.hidden = false;
         clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => { node.hidden = true; }, bad ? 6000 : 2500);
+        toastTimer = setTimeout(() => { node.hidden = true; }, bad ? 12000 : 2500);
     }
 
     // --- the model --------------------------------------------------------------
@@ -132,6 +162,7 @@
 
     function set(path, value, rerender) {
         setIn(draft, path, value);
+        clearError(path);
         if (JSON.stringify(get(path, server)) === JSON.stringify(value)) { dirty.delete(path); }
         else { dirty.add(path); }
         updateSavebar();
@@ -140,13 +171,163 @@
 
     function updateSavebar() {
         const count = dirty.size + Object.keys(secrets).length + Object.keys(appChanges).length;
-        $('savebar').hidden = count === 0;
-        $('dirty_text').textContent = count === 1 ? '1 unsaved change' : count + ' unsaved changes';
+        const problems = Object.keys(fieldErrors).length;
+        $('savebar').hidden = count === 0 && problems === 0;
+        const text = $('dirty_text');
+        text.classList.toggle('err', problems > 0);
+        text.textContent = problems === 1 ? 'Not saved: 1 setting needs fixing'
+            : problems > 1 ? 'Not saved: ' + problems + ' settings need fixing'
+                : count === 1 ? '1 unsaved change' : count + ' unsaved changes';
+    }
+
+    // --- problems with a setting, shown at the field until it is changed ------------
+
+    const fieldErrors = {}; // path -> sentence for a person
+
+    function clearError(path) {
+        let changed = false;
+        for (const key of Object.keys(fieldErrors)) {
+            if (key === path || key.startsWith(path + '.') || path.startsWith(key + '.')) {
+                delete fieldErrors[key];
+                changed = true;
+            }
+        }
+        if (changed) {
+            const node = document.querySelector('.field[data-path="' + path + '"]');
+            if (node) { node.classList.remove('invalid'); const p = node.querySelector('.err'); if (p) { p.remove(); } }
+        }
+    }
+
+    // Marks each field the clock (or the page) refused, with the reason under it.
+    function showErrors() {
+        document.querySelectorAll('.field.invalid').forEach((node) => {
+            node.classList.remove('invalid');
+            node.querySelectorAll('p.err').forEach((p) => p.remove());
+        });
+        let first = null;
+        for (const [path, text] of Object.entries(fieldErrors)) {
+            const node = document.querySelector('.field[data-path="' + path + '"]');
+            if (!node) { continue; }
+            node.classList.add('invalid');
+            node.appendChild(h('p.err.small', { text, role: 'alert' }));
+            if (!first) { first = node; }
+        }
+        return first;
+    }
+
+    const LABELS = {
+        'glucose.alarms.urgentLow': 'Urgent low alert', 'glucose.alarms.low': 'Low alert',
+        'glucose.alarms.high': 'High alert', 'glucose.alarms.noData': 'No data alert',
+        'glucose.alarms.repeatSeconds': 'Repeat every', 'glucose.alarms.volumePercent': 'Alert volume',
+        'glucose.faces': 'Clock faces', 'glucose.face': 'Face shown by default',
+        'glucose.cycleSeconds': 'Cycle through faces', 'glucose.schedule': 'Daily schedule',
+        'glucose.schedule.rows': 'Daily schedule', 'glucose.source': 'Glucose data source',
+        'glucose.url': 'Nightscout URL', 'glucose.pollSeconds': 'Ask for a new reading every',
+        'display.brightness': 'Brightness', 'display.night': 'Dim overnight',
+        'clock.timezone': 'Time zone', 'deviceName': 'Device name', 'web.username': 'Username',
+    };
+    const FIELD_WORDS = { mgdl: 'threshold', melody: 'sound', snoozeMinutes: 'snooze', windows: 'time windows', minutes: 'time without a reading' };
+
+    function labelFor(path) {
+        if (LABELS[path]) { return LABELS[path]; }
+        const dot = path.lastIndexOf('.');
+        const parent = path.slice(0, dot);
+        if (LABELS[parent] && FIELD_WORDS[path.slice(dot + 1)]) {
+            return LABELS[parent] + ' ' + FIELD_WORDS[path.slice(dot + 1)];
+        }
+        return LABELS[parent] || path.split('.').pop();
+    }
+
+    // The clock's refusals name settings by path ("'glucose.alarms.low.mgdl'
+    // must be ..."), which is right for the API and wrong for this page. This
+    // turns one into the field it is about and a sentence for a person.
+    function explain(message) {
+        const match = /^'([\w.]+)'(:?)\s*(.*)$/.exec(message || '');
+        if (!match) { return { path: null, text: message || 'The clock refused the change.' }; }
+        let path = match[1];
+        const rest = match[3];
+        let text;
+        let m;
+        if (/thresholds must rise/.test(rest)) {
+            path = 'glucose.alarms.low.mgdl';
+            text = 'The thresholds have to go up in order: urgent low, then low, then high.';
+        } else if ((m = /^must be a whole number, (\d+)-(\d+)$/.exec(rest))) {
+            text = 'Enter a whole number from ' + m[1] + ' to ' + m[2] + '.';
+        } else if (/\.melody$/.test(path)) {
+            text = 'This is not a tune the clock can play (' + rest.replace(/^melody /, '') +
+                '). It looks like name:d=4,o=5,b=120:c,e,g.';
+        } else {
+            text = labelFor(path) + ' ' + rest.replace(/'([\w.]+)'/g, (_, p) => labelFor(p).toLowerCase()) + '.';
+            text = text.replace(/\.\.$/, '.');
+        }
+        return { path, text };
+    }
+
+    // Caught here rather than by the clock: an empty box, a number out of range,
+    // thresholds out of order. The clock checks all of it again.
+    function validate() {
+        const found = {};
+        const t = {};
+        for (const key of ['urgentLow', 'low', 'high']) {
+            const path = 'glucose.alarms.' + key + '.mgdl';
+            const value = get(path);
+            t[key] = value;
+            if (value === null || value === undefined || value === '' || Number.isNaN(value)) {
+                found[path] = 'Enter a threshold - a whole number from 30 to 399.';
+            } else if (!Number.isInteger(value) || value < 30 || value > 399) {
+                found[path] = 'Enter a whole number from 30 to 399.';
+            }
+        }
+        if (!found['glucose.alarms.low.mgdl'] && !found['glucose.alarms.urgentLow.mgdl'] && t.urgentLow >= t.low) {
+            found['glucose.alarms.low.mgdl'] = 'Has to be above the urgent low threshold (' + t.urgentLow + ').';
+        }
+        if (!found['glucose.alarms.high.mgdl'] && !found['glucose.alarms.low.mgdl'] && t.low >= t.high) {
+            found['glucose.alarms.high.mgdl'] = 'Has to be above the low threshold (' + t.low + ').';
+        }
+        for (const key of ['urgentLow', 'low', 'high', 'noData']) {
+            const path = 'glucose.alarms.' + key + '.melody';
+            if (!dirty.has(path)) { continue; }
+            const melody = get(path) || '';
+            if (!/^[^:]*:[^:]*:[^:]+$/.test(melody)) {
+                found[path] = 'This is not a tune the clock can play. It looks like name:d=4,o=5,b=120:c,e,g - three parts separated by colons.';
+            }
+        }
+        // Only report what this save touches, so an old oddity on the clock
+        // does not block an unrelated change.
+        for (const path of Object.keys(found)) {
+            const touched = [...dirty].some((d) => d === path || d.startsWith(path) || path.startsWith(d) ||
+                (/\.mgdl$/.test(path) && /\.mgdl$/.test(d)));
+            if (!touched) { delete found[path]; }
+        }
+        return found;
+    }
+
+    function tabFor(path) {
+        if (/^glucose\.alarms/.test(path)) { return 'alarms'; }
+        if (/^(display|clock)\.|^glucose\.(faces|face|cycleSeconds|schedule)/.test(path)) { return 'display'; }
+        if (/^glucose\./.test(path)) { return 'glucose'; }
+        return 'system';
+    }
+
+    function reportErrors(found) {
+        Object.assign(fieldErrors, found);
+        $('toast').hidden = true; // an old "Saved" must not sit beside a refusal
+        const paths = Object.keys(found);
+        if (paths.length && tabFor(paths[0]) !== currentTab) { showTab(tabFor(paths[0])); } else { render(); }
+        const first = document.querySelector('.field.invalid');
+        if (first) {
+            first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            const control = first.querySelector('input, select');
+            if (control) { control.focus({ preventScroll: true }); }
+        }
+        updateSavebar();
+        return first !== null;
     }
 
     // Bound controls: each writes its path in the draft.
     function bindInput(path, attrs, convert) {
         const input = h('input', attrs);
+        input.dataset.path = path;
         const value = get(path);
         if (attrs.type === 'checkbox') { input.checked = !!value; }
         else { input.value = value === undefined || value === null ? '' : value; }
@@ -160,6 +341,7 @@
 
     function bindSelect(path, options, convert, rerender) {
         const select = h('select', {});
+        select.dataset.path = path;
         for (const [value, label] of options) {
             select.appendChild(h('option', { value: String(value), text: label }));
         }
@@ -201,10 +383,13 @@
     // Ten levels like the TC001, over the panel's 0-255.
     const LEVELS = Array.from({ length: 10 }, (_, i) => [Math.round(((i + 1) / 10) * 255), 'Level ' + (i + 1)]);
     LEVELS[0][0] = 8;
-    function nearestLevel(value) {
-        let best = LEVELS[0][0];
-        for (const [level] of LEVELS) { if (Math.abs(level - value) < Math.abs(best - value)) { best = level; } }
-        return best;
+    // The clock's own - and + move in steps of 16, so it can hold a value
+    // between two of these. That value is offered as it is rather than shown
+    // as the nearest level, which would change it on the next save.
+    function levelOptions(value, base) {
+        const options = base || LEVELS;
+        if (value === null || value === undefined || options.some(([v]) => v === value)) { return options; }
+        return [[value, 'As set on the clock (' + value + ')'], ...options];
     }
 
     const ZONES = [
@@ -220,6 +405,62 @@
         ['NZST-12NZDT,M9.5.0,M4.1.0/3', 'New Zealand'], ['SAST-2', 'South Africa'],
         ['<-03>3', 'Brazil (Sao Paulo)'], ['<-05>5', 'Colombia, Peru'],
     ];
+
+    // The browser's own zone, as one of the rules above, so a clock with none
+    // set can be offered the right one in a tap.
+    const IANA_TO_ZONE = [
+        [/^America\/(New_York|Detroit|Toronto|Montreal|Nassau|Indiana\/.+|Kentucky\/.+)$/, 'EST5EDT,M3.2.0,M11.1.0'],
+        [/^America\/(Chicago|Winnipeg|Menominee|North_Dakota\/.+|Indiana\/(Knox|Tell_City))$/, 'CST6CDT,M3.2.0,M11.1.0'],
+        [/^America\/(Denver|Boise|Edmonton)$/, 'MST7MDT,M3.2.0,M11.1.0'],
+        [/^America\/Phoenix$/, 'MST7'],
+        [/^America\/(Los_Angeles|Vancouver|Tijuana)$/, 'PST8PDT,M3.2.0,M11.1.0'],
+        [/^America\/(Halifax|Moncton|Glace_Bay)$|^Atlantic\/Bermuda$/, 'AST4ADT,M3.2.0,M11.1.0'],
+        [/^Europe\/(London|Dublin|Lisbon)$|^Atlantic\/(Canary|Madeira)$/, 'GMT0BST,M3.5.0/1,M10.5.0'],
+        [/^Europe\/(Berlin|Paris|Madrid|Rome|Amsterdam|Brussels|Vienna|Zurich|Stockholm|Oslo|Copenhagen|Prague|Warsaw|Budapest|Belgrade|Zagreb|Ljubljana|Bratislava|Luxembourg|Monaco|Malta|Andorra)$/, 'CET-1CEST,M3.5.0,M10.5.0/3'],
+        [/^Europe\/(Athens|Helsinki|Kyiv|Kiev|Bucharest|Sofia|Riga|Tallinn|Vilnius)$/, 'EET-2EEST,M3.5.0/3,M10.5.0/4'],
+        [/^Europe\/Moscow$/, 'MSK-3'], [/^Asia\/(Kolkata|Calcutta)$/, 'IST-5:30'], [/^Asia\/(Dubai|Muscat)$/, '<+04>-4'],
+        [/^Asia\/(Shanghai|Singapore|Hong_Kong|Taipei|Kuala_Lumpur|Manila)$/, 'CST-8'], [/^Asia\/Tokyo$/, 'JST-9'],
+        [/^Asia\/Seoul$/, 'KST-9'], [/^Australia\/(Sydney|Melbourne|Hobart|Canberra)$/, 'AEST-10AEDT,M10.1.0,M4.1.0/3'],
+        [/^Australia\/Brisbane$/, 'AEST-10'], [/^Pacific\/Auckland$/, 'NZST-12NZDT,M9.5.0,M4.1.0/3'],
+        [/^Africa\/Johannesburg$/, 'SAST-2'], [/^America\/Sao_Paulo$/, '<-03>3'], [/^America\/(Bogota|Lima)$/, '<-05>5'],
+    ];
+    function browserZone() {
+        let iana = '';
+        try { iana = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* old browser */ }
+        const hit = IANA_TO_ZONE.find(([re]) => re.test(iana));
+        return { iana, zone: hit ? hit[1] : null };
+    }
+    const zoneName = (zone) => (ZONES.find((z) => z[0] === zone) || [zone, zone])[1];
+    const hhmm = (date) => String(date.getUTCHours()).padStart(2, '0') + ':' + String(date.getUTCMinutes()).padStart(2, '0');
+    function offsetLabel(seconds) {
+        const a = Math.abs(seconds || 0);
+        return 'UTC' + ((seconds || 0) < 0 ? '-' : '+') + Math.floor(a / 3600) + (a % 3600 ? ':' + String((a % 3600) / 60).padStart(2, '0') : '');
+    }
+
+    // Everything that runs by the clock's time - the time face, overnight
+    // dimming, the schedule, alarm windows - follows this. A clock left on UTC
+    // looks fine and then dims at six in the evening.
+    function zoneWarning(short) {
+        if (get('clock.timezone')) { return null; }
+        const offset = get('clock.utcOffsetSeconds') || 0;
+        const clockNow = hhmm(new Date(Date.now() + offset * 1000));
+        const here = new Date();
+        const hereNow = String(here.getHours()).padStart(2, '0') + ':' + String(here.getMinutes()).padStart(2, '0');
+        const mismatch = clockNow !== hereNow;
+        if (short) {
+            return mismatch ? h('p.notice.warn.small', { text: 'No time zone is set, so these times are ' + offsetLabel(offset) +
+                ' - the clock thinks it is ' + clockNow + ', not ' + hereNow + '. Set the time zone under Time below.' }) : null;
+        }
+        const { iana, zone } = browserZone();
+        return h('div.notice.warn', {},
+            h('p', { text: 'No time zone is set. The clock is on ' + offsetLabel(offset) + ' and thinks it is ' + clockNow +
+                (mismatch ? ' - it is ' + hereNow + ' here.' : '.') +
+                ' The time face, overnight dimming, the schedule and alarm windows all follow the clock\'s time.' }),
+            zone ? h('div.row', { style: 'margin-top:8px' }, h('button.btn.sm', {
+                type: 'button', text: 'Use ' + zoneName(zone) + ' (this browser\'s zone)',
+                onclick: () => set('clock.timezone', zone, true),
+            })) : iana ? h('p.small', { text: 'This browser is on ' + iana + '. Pick the closest zone above.' }) : null);
+    }
 
     const SOURCES = [['nightscout', 'Nightscout'], ['dexcom', 'Dexcom'], ['librelinkup', 'LibreLinkUp'], ['medtrum', 'Medtrum Easy Follow']];
     const DEXCOM_SERVERS = [['us', 'US'], ['ous', 'Non-US'], ['jp', 'Japan']];
@@ -349,18 +590,18 @@
             const sorted = clone(rows).sort((a, b) => timeToMinutes(a.from) - timeToMinutes(b.from));
             set('glucose.schedule.rows', sorted);
         };
-        const list = h('div.rows', {}, rows.map((row, i) => {
-            const time = h('input', { type: 'time', value: row.from, 'aria-label': 'From' });
-            time.addEventListener('change', () => { row.from = time.value || '00:00'; commit(); });
-            const face = h('select', { 'aria-label': 'Face' }, usable.map(([v, l]) => h('option', { value: v, text: l })));
+        const list = h('div.rows.field', { 'data-path': 'glucose.schedule.rows' }, rows.map((row, i) => {
+            const time = h('input.sched-time', { type: 'time', value: row.from, 'aria-label': 'From' });
+            time.addEventListener('change', () => { row.from = time.value || '00:00'; commit(); render(); });
+            const face = h('select.sched-face', { 'aria-label': 'Face' }, usable.map(([v, l]) => h('option', { value: v, text: l })));
             face.value = row.face;
             face.addEventListener('change', () => { row.face = face.value; commit(); });
-            const level = h('select', { 'aria-label': 'Brightness' },
+            const level = h('select.sched-level', { 'aria-label': 'Brightness' },
                 h('option', { value: '', text: 'Brightness as set' }),
-                LEVELS.map(([v, l]) => h('option', { value: String(v), text: l })));
-            level.value = row.brightness === null || row.brightness === undefined ? '' : String(nearestLevel(row.brightness));
+                levelOptions(row.brightness).map(([v, l]) => h('option', { value: String(v), text: l })));
+            level.value = row.brightness === null || row.brightness === undefined ? '' : String(row.brightness);
             level.addEventListener('change', () => { row.brightness = level.value === '' ? null : Number(level.value); commit(); });
-            const remove = h('button.btn.icon', {
+            const remove = h('button.btn.icon.sched-remove', {
                 type: 'button', 'aria-label': 'Remove this time', text: '×',
                 onclick: () => {
                     rows.splice(i, 1);
@@ -380,12 +621,12 @@
             toggleRow('Change face and brightness on a schedule',
                 'From each time the clock shows that face at that brightness until the next row; the last row runs overnight. The knob still changes the face in between.',
                 enabled),
-            enabled.checked ? list : null, enabled.checked ? h('div.row', {}, add) : null);
+            enabled.checked ? list : null, enabled.checked ? h('div.row', {}, add) : null,
+            enabled.checked ? zoneWarning(true) : null);
     }
 
     function brightnessCard() {
-        const level = bindSelect('display.brightness', LEVELS, Number);
-        level.value = String(nearestLevel(get('display.brightness')));
+        const level = bindSelect('display.brightness', levelOptions(get('display.brightness')), Number);
         const night = h('input', { type: 'checkbox' });
         night.checked = !!get('display.night.enabled');
         night.addEventListener('input', () => set('display.night.enabled', night.checked, true));
@@ -393,17 +634,18 @@
         from.addEventListener('change', () => set('display.night.startMinutes', timeToMinutes(from.value || '22:00')));
         const to = h('input', { type: 'time', value: minutesToTime(get('display.night.endMinutes') || 0) });
         to.addEventListener('change', () => set('display.night.endMinutes', timeToMinutes(to.value || '07:00')));
-        const nightLevel = bindSelect('display.night.brightness', [[1, 'Barely lit'], ...LEVELS], Number);
-        nightLevel.value = String(get('display.night.brightness') <= 2 ? 1 : nearestLevel(get('display.night.brightness')));
+        const nightLevel = bindSelect('display.night.brightness',
+            levelOptions(get('display.night.brightness'), [[1, 'Barely lit'], ...LEVELS]), Number);
         return card('Brightness level', null,
             field('Brightness', level, 'Level 1 is the dimmest. The - and + buttons on the clock change it too. A schedule row with its own brightness overrides this.'),
             toggleRow('Dim overnight', 'Sits on top of everything else, including the schedule. An alarm always lights the panel.', night),
-            night.checked ? h('div.grid', {}, field('From', from), field('Until', to), field('Overnight level', nightLevel)) : null);
+            night.checked ? h('div.grid', {}, field('From', from), field('Until', to), field('Overnight level', nightLevel)) : null,
+            night.checked ? zoneWarning(true) : null);
     }
 
     function timeCard() {
         const zone = bindSelect('clock.timezone', ZONES, null, true);
-        const children = [field('Time zone', zone), toggleRow('24-hour time', null, bindInput('clock.twentyFourHour', { type: 'checkbox' }))];
+        const children = [field('Time zone', zone), zoneWarning(false), toggleRow('24-hour time', null, bindInput('clock.twentyFourHour', { type: 'checkbox' }))];
         if (!get('clock.timezone')) {
             const hours = [];
             for (let o = -12 * 3600; o <= 14 * 3600; o += 1800) {
@@ -535,7 +777,7 @@
             return h('div.window', {}, h('div', {}, days, h('div.times', {}, from, '–', to)),
                 h('button.btn.icon', { type: 'button', 'aria-label': 'Remove window', text: '×', onclick: () => { windows.splice(i, 1); set(path, clone(windows), true); } }));
         }));
-        return h('div.field', {}, h('span.label', { text: 'When it may sound' }), list,
+        return h('div.field', { 'data-path': path }, h('span.label', { text: 'When it may sound' }), list,
             h('div.row', {}, h('button.btn.sm', { type: 'button', text: 'Add a time window', disabled: windows.length >= 8, onclick: () => { windows.push({ days: '0123456', from: '22:00', to: '07:00' }); set(path, clone(windows), true); } })),
             h('p.help', { text: windows.length ? 'Only inside one of these windows. A window that ends before it starts runs past midnight.' : 'Any time. Add a window to keep it to certain hours.' }),
             key === 'urgentLow' && windows.length ? h('p.notice.warn', { text: 'A window here can keep an urgent low quiet. Think hard before limiting it.' }) : null);
@@ -571,14 +813,15 @@
         const snooze = bindSelect(base + '.snoozeMinutes',
             [[5, '5 minutes'], [10, '10 minutes'], [15, '15 minutes'], [30, '30 minutes'], [60, '1 hour'], [120, '2 hours'], [0, alarm.until]], Number);
         const threshold = alarm.threshold
-            ? field(alarm.threshold, bindInput(base + '.mgdl', { type: 'number', min: '30', max: '399', step: '1' }, Number))
+            ? field(alarm.threshold, bindInput(base + '.mgdl', { type: 'number', min: '30', max: '399', step: '1', inputmode: 'numeric' },
+                (v) => (String(v).trim() === '' ? null : Number(v))))
             : field('After no reading for', bindSelect('glucose.alarms.noData.minutes', [[20, '20 minutes'], [30, '30 minutes'], [45, '45 minutes'], [60, '1 hour']], Number));
         const on = !!get(base + '.enabled');
         return h('section.card.alarm', {},
             h('div.switch-row', {}, h('h3', { text: alarm.title + ' alert' }), h('label.switch', {}, enabled, h('span'))),
             on ? h('fieldset.stack', {},
                 h('div.grid', {}, threshold, field('Snooze for', snooze, 'Press the knob while it sounds.')),
-                h('div.field', {}, h('span.label', { text: 'Sound' }), h('div.row.melody-row', {}, preset, tryIt), melody),
+                h('div.field', { 'data-path': melodyPath }, h('span.label', { text: 'Sound' }), h('div.row.melody-row', {}, preset, tryIt), melody),
                 windowsEditor(k)) : null);
     }
 
@@ -659,6 +902,16 @@
                 : h('p.help', { text: 'Available once the clock is connected to a network.' }));
     }
 
+    const canReboot = () => !!(device.capabilities && device.capabilities.reboot);
+
+    function duration(millis) {
+        const minutes = Math.floor((millis || 0) / 60000);
+        const d = Math.floor(minutes / 1440), hrs = Math.floor((minutes % 1440) / 60), m = minutes % 60;
+        if (d > 0) { return d + (d === 1 ? ' day ' : ' days ') + hrs + ' h'; }
+        if (hrs > 0) { return hrs + ' h ' + m + ' min'; }
+        return m + ' min';
+    }
+
     function systemTab() {
         return [
             wifiCard(),
@@ -671,13 +924,15 @@
             card('Version', null,
                 h('dl.kv', {},
                     h('dt', { text: 'Firmware' }), h('dd', { text: (device.version || '?') + ' (' + (device.platform || '?') + ')' }),
-                    h('dt', { text: 'Up for' }), h('dd', { text: Math.round((health.uptimeMillis || 0) / 60000) + ' min' })),
+                    h('dt', { text: 'Clock on for' }), h('dd', { text: duration(health.uptimeMillis) })),
                 h('div.row', {},
                     h('a.btn', { href: '/advanced.html', text: 'Advanced settings' }),
-                    h('button.btn', { type: 'button', text: 'Restart the clock', onclick: async () => {
+                    // This hardware cannot restart itself; the button only
+                    // appears where pressing it can work.
+                    canReboot() ? h('button.btn', { type: 'button', text: 'Restart the clock', onclick: async () => {
                         if (!window.confirm('Restart the clock now?')) { return; }
                         try { await send('POST', '/api/v1/system/reboot'); toast('Restarting…'); } catch (e) { toast(e.message, true); }
-                    } })),
+                    } }) : null),
                 h('p.help', { text: 'Advanced has firmware updates, backup and restore, MQTT, scripts and the log.' })),
         ];
     }
@@ -694,7 +949,9 @@
         $('device_name').textContent = (server && server.deviceName) || 'Glucose clock';
         $('device_sub').textContent = 'v' + (device.version || '?') + ' · ' + (network.ipv4 || location.hostname) + ' · online';
         pill('pill_wifi', network.connected ? 'ok' : 'warn', network.connected ? 'Connected' : 'Setup mode');
-        pill('pill_time', health.wallClockValid ? 'ok' : 'warn', health.wallClockValid ? 'Set' : 'Not yet');
+        if (!health.wallClockValid) { pill('pill_time', 'warn', 'Not yet'); }
+        else if (server && server.clock && !server.clock.timezone) { pill('pill_time', 'warn', offsetLabel(server.clock.utcOffsetSeconds) + ', no zone'); }
+        else { pill('pill_time', 'ok', 'Set'); }
         const g = diag.glucose || {};
         const sourceLabel = (SOURCES.find((s) => s[0] === g.source) || ['', 'Source'])[1];
         if (!g.configured) { pill('pill_source', 'warn', 'Not set up'); }
@@ -727,6 +984,7 @@
             button.setAttribute('aria-selected', button.dataset.tab === currentTab ? 'true' : 'false');
         });
         updateHeader();
+        showErrors();
         window.scrollTo(0, scroll);
     }
 
@@ -789,12 +1047,62 @@
         return patch;
     }
 
+    function savedNow() {
+        draft = clone(server);
+        dirty.clear();
+        for (const key of Object.keys(secrets)) { delete secrets[key]; }
+        updateSavebar();
+        render();
+    }
+
+    // The clock may have saved even though its answer never arrived. A PATCH
+    // is all or nothing, so one changed value tells for the whole of it.
+    async function checkLostSave(sentPaths) {
+        let fresh;
+        try { fresh = await send('GET', '/api/v1/settings'); } catch (e) {
+            return 'The clock did not answer, so the page cannot tell whether this saved. Check the clock is on, then press Save again - saving twice is harmless.';
+        }
+        const sent = sentPaths.filter((path) => !(path in secrets));
+        const same = (path) => JSON.stringify(get(path, fresh)) === JSON.stringify(get(path));
+        if (sent.length && sent.every(same)) {
+            server = fresh;
+            savedNow();
+            return null;
+        }
+        if (!sent.length) {
+            return 'The clock\'s answer was lost, and a password cannot be read back to check. Press Save again - it is harmless if it already took.';
+        }
+        // Not taken: what now differs from the clock stays unsaved.
+        server = fresh;
+        dirty.clear();
+        for (const path of sentPaths) { if (!(path in secrets) && !same(path)) { dirty.add(path); } }
+        updateSavebar();
+        return 'The change did not reach the clock. Press Save to try again.';
+    }
+
     async function save() {
         const button = $('save');
+        for (const key of Object.keys(fieldErrors)) { delete fieldErrors[key]; }
+        const problems = validate();
+        if (Object.keys(problems).length) { reportErrors(problems); return; }
         button.disabled = true;
+        $('dirty_text').textContent = 'Saving…';
         try {
             if (dirty.size || Object.keys(secrets).length) {
-                server = await send('PATCH', '/api/v1/settings', buildPatch());
+                const sentPaths = [...dirty, ...Object.keys(secrets)];
+                try {
+                    server = await send('PATCH', '/api/v1/settings', buildPatch());
+                    savedNow();
+                } catch (e) {
+                    if (!e.network) {
+                        const { path, text } = explain(e.message);
+                        if (path && reportErrors({ [path]: text })) { return; }
+                        toast(text, true);
+                        return;
+                    }
+                    const problem = await checkLostSave(sentPaths);
+                    if (problem) { toast(problem, true); return; }
+                }
             }
             for (const [id, enabled] of Object.entries(appChanges)) {
                 await send('PATCH', '/api/v1/apps/' + encodeURIComponent(id), { enabled });
@@ -802,21 +1110,20 @@
             }
             const appList = await send('GET', '/api/v1/apps');
             apps = (appList && appList.apps) || apps;
-            draft = clone(server);
-            dirty.clear();
-            for (const key of Object.keys(secrets)) { delete secrets[key]; }
             updateSavebar();
             render();
             toast('Saved');
             setTimeout(refreshStatus, 3000);
         } catch (e) {
-            toast(e.message, true);
+            toast(e.network ? 'The clock did not answer. Reload the page to see what it holds now.' : explain(e.message).text, true);
         } finally {
             button.disabled = false;
+            updateSavebar();
         }
     }
 
     function discard() {
+        for (const key of Object.keys(fieldErrors)) { delete fieldErrors[key]; }
         draft = clone(server);
         dirty.clear();
         for (const key of Object.keys(secrets)) { delete secrets[key]; }

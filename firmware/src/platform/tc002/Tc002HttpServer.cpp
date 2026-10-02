@@ -144,7 +144,7 @@ bool Tc002HttpServer::start(int port, IHttpRequestHandler& handler) {
         return false;
     }
 
-    if (::listen(listenFd_, kMaxConnections) != 0) {
+    if (::listen(listenFd_, kListenBacklog) != 0) {
         ::close(listenFd_);
         listenFd_ = -1;
         return false;
@@ -167,19 +167,37 @@ void Tc002HttpServer::stop() {
     port_ = 0;
 }
 
-std::size_t Tc002HttpServer::ceilingFor(const std::string& inbound) const {
+bool Tc002HttpServer::isUpload(const std::string& inbound) noexcept {
+    const std::size_t prefix = std::strlen(kUploadRequestLine);
+    return inbound.size() >= prefix && inbound.compare(0, prefix, kUploadRequestLine) == 0;
+}
+
+std::size_t Tc002HttpServer::ceilingFor(const Connection& connection) const {
     // Decided from the first line, which arrives in the first packet. Until
     // enough has arrived to tell, the small ceiling applies - and it is far
     // larger than a request line, so nothing is ever refused for being
     // undecidable.
-    const std::size_t prefix = std::strlen(kUploadRequestLine);
-    if (inbound.size() < prefix) {
+    if (!isUpload(connection.inbound)) {
         return kMaxRequestBytes;
     }
-    if (inbound.compare(0, prefix, kUploadRequestLine) != 0) {
-        return kMaxRequestBytes;
+    // One upload at a time. The one that got past the small ceiling first
+    // keeps the large one; any other is held to the small ceiling.
+    for (const Connection& other : connections_) {
+        if (&other != &connection && other.fd >= 0 && isUpload(other.inbound) &&
+            other.inbound.size() > kMaxRequestBytes) {
+            return kMaxRequestBytes;
+        }
     }
     return kMaxUploadBytes;
+}
+
+bool Tc002HttpServer::hasFreeSlot() const noexcept {
+    for (const Connection& connection : connections_) {
+        if (connection.fd < 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void Tc002HttpServer::closeConnection(Connection& connection) noexcept {
@@ -195,6 +213,15 @@ void Tc002HttpServer::closeConnection(Connection& connection) noexcept {
 
 void Tc002HttpServer::acceptPending(std::uint64_t nowMillis) {
     for (;;) {
+        // A full table leaves the rest in the listen backlog, where the kernel
+        // holds them until a slot frees on a later poll. Accepting one only to
+        // close it turned a burst of six requests into lost answers; the
+        // backlog is the bound now, and past it the kernel makes the client
+        // retry its SYN rather than seeing a connection reset.
+        if (!hasFreeSlot()) {
+            return;
+        }
+
         const int fd = ::accept(listenFd_, nullptr, nullptr);
         if (fd < 0) {
             return;  // EAGAIN: nothing waiting, which is the usual case.
@@ -209,11 +236,11 @@ void Tc002HttpServer::acceptPending(std::uint64_t nowMillis) {
         }
 
         if (slot == nullptr) {
-            // Refusing beats queueing. The table is the bound, and a caller
-            // that is told no immediately can retry; one left hanging cannot.
+            // Cannot happen after hasFreeSlot(), kept so a change there cannot
+            // leak a descriptor.
             ::close(fd);
             ++rejected_;
-            continue;
+            return;
         }
 
         if (!setNonBlocking(fd)) {
@@ -422,13 +449,13 @@ void Tc002HttpServer::service(Connection& connection, std::uint64_t nowMillis) {
     }
 
     // --- read what has arrived -----------------------------------------------
-    const std::size_t ceiling = ceilingFor(connection.inbound);
+    const std::size_t ceiling = ceilingFor(connection);
     char chunk[kReadChunk];
     for (;;) {
         const ssize_t got = ::recv(connection.fd, chunk, sizeof(chunk), 0);
         if (got > 0) {
             if (connection.inbound.size() + static_cast<std::size_t>(got) >
-                ceilingFor(connection.inbound)) {
+                ceilingFor(connection)) {
                 ++rejected_;
                 queueResponse(connection, api::payloadTooLarge(
                                               ceiling > kMaxRequestBytes

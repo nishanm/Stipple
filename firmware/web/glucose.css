@@ -67,9 +67,12 @@ fieldset.off input, fieldset.off select, fieldset.off .windows { opacity: .55; }
 
 /* ---------- fields ---------- */
 .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.field { display: grid; gap: 6px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
-.field > label, .label { font-weight: 500; }
-.help { color: var(--muted); }
+/* align-content: start - a field beside a taller one (one with a help line)
+   keeps its box at the top instead of stretching it to the row's height. */
+.field { display: grid; gap: 6px; min-width: 0; grid-template-columns: minmax(0, 1fr); align-content: start; }
+.field > label, .label { font-weight: 600; color: var(--text); letter-spacing: .01em; }
+/* One size for help everywhere, under a field or beside a switch. */
+.help { color: var(--muted); font-size: 14px; line-height: 20px; }
 .err { color: #fca5a5; }
 .field.invalid input, .field.invalid select { border-color: #f87171; }
 input[type=text], input[type=password], input[type=email], input[type=time], select {
@@ -159,7 +162,12 @@ input[type=range] { width: 100%; height: 44px; accent-color: var(--cyan); margin
 .times input { width: 132px; }
 
 /* ---------- save bar, bottom nav, toasts ---------- */
-.savebar { position: fixed; right: 16px; bottom: 16px; z-index: 30; display: flex; gap: 8px; align-items: center; background: var(--surface-high); border: 1px solid var(--line-2); border-radius: 12px; padding: 8px 8px 8px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+/* A strip across the foot of the window, its contents lined up with the 880px
+   column, rather than a box floating over the cards' right-hand controls.
+   .wrap's bottom padding keeps the last card clear of it. */
+.savebar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; gap: 8px; align-items: center; justify-content: flex-end; background: var(--surface-high); border-top: 1px solid var(--line-2); padding: 10px max(var(--pad), calc((100vw - 880px) / 2 + var(--pad))); box-shadow: 0 -10px 30px rgba(0,0,0,.35); }
+.savebar #dirty_text { margin-right: auto; }
+.savebar #dirty_text.err { color: #fca5a5; font-weight: 600; }
 .bottom { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: rgb(1, 15, 31); border-top: 1px solid var(--line); display: none; padding-bottom: env(safe-area-inset-bottom); }
 .bottom nav { display: grid; grid-template-columns: repeat(4, 1fr); }
 .bottom nav button { appearance: none; border: 0; background: none; color: var(--muted); font: 600 13px/16px var(--sans); min-height: 56px; padding: 8px 0; display: grid; justify-items: center; align-content: center; gap: 4px; cursor: pointer; }
@@ -176,7 +184,7 @@ input[type=range] { width: 100%; height: 44px; accent-color: var(--cyan); margin
   .tabs { display: none; }
   .bottom { display: block; }
   .wrap { padding-bottom: calc(150px + env(safe-area-inset-bottom)); }
-  .savebar { left: 8px; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); justify-content: space-between; }
+  .savebar { left: 8px; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); justify-content: space-between; border: 1px solid var(--line-2); border-radius: 12px; padding: 8px 8px 8px 14px; box-shadow: 0 10px 30px rgba(0,0,0,.4); }
   .toast { bottom: calc(136px + env(safe-area-inset-bottom)); }
 }
 
@@ -186,7 +194,13 @@ input[type=range] { width: 100%; height: 44px; accent-color: var(--cyan); margin
 .bottom .ico { font-size: 18px; line-height: 20px; }
 .rows { display: grid; gap: 8px; }
 .sched-row { display: grid; grid-template-columns: 150px minmax(0, 1fr) minmax(0, 1fr) 44px; gap: 8px; align-items: center; }
-@media (max-width: 520px) { .sched-row { grid-template-columns: 1fr 1fr; } }
+/* Phones: time and remove on one line, the face and brightness each get the
+   full width below so their names are not cut off. */
+@media (max-width: 520px) {
+  .sched-row { grid-template-columns: minmax(0, 1fr) 44px; grid-template-areas: "time remove" "face face" "level level"; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+  .sched-row:last-child { border-bottom: 0; padding-bottom: 0; }
+  .sched-time { grid-area: time; } .sched-face { grid-area: face; } .sched-level { grid-area: level; } .sched-remove { grid-area: remove; }
+}
 .net-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-low); border: 1px solid var(--line); border-radius: var(--radius); }
 .reading-big { font: 700 28px/34px var(--mono); }
 .band-green { color: var(--green); } .band-amber { color: var(--amber); } .band-red { color: #f87171; } .band-gray { color: var(--muted); }

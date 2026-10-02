@@ -35,9 +35,15 @@ namespace tc002 {
 /// discovered.
 class Tc002HttpServer final : public IHttpServer {
 public:
-    /// Four is generous for a clock. A browser opens two or three for one page
-    /// and the API is used by one integration at a time.
-    static constexpr int kMaxConnections = 4;
+    /// Connections served at once. A browser opens up to six to one host, so
+    /// fewer than that and a single page load can find the table full.
+    static constexpr int kMaxConnections = 8;
+
+    /// Connections the kernel holds, completed but not yet accepted, while the
+    /// table is full. They wait a poll or two and are then served, instead of
+    /// being accepted and closed unanswered - which is what a burst of six
+    /// requests met when the table was four and full meant "close".
+    static constexpr int kListenBacklog = 16;
 
     /// Caps a single request, headers and body together. Larger than any
     /// legitimate scene or icon payload and far smaller than anything that
@@ -47,13 +53,11 @@ public:
     /// The one request allowed to be enormous: a firmware image.
     ///
     /// **Earned, not granted.** Raising kMaxRequestBytes to this would let
-    /// four connections hold sixteen megabytes between them, which is every
-    /// byte of free RAM on this device. Instead a connection only gets this
-    /// ceiling once its first line shows it is the upload. Four
-    /// simultaneous uploads would still be too much, and nothing here stops
-    /// them - but four browsers all posting firmware at once is not a
-    /// threat model, and the connection table caps it at four rather than
-    /// at however many somebody opens.
+    /// eight connections hold thirty-odd megabytes between them, more than
+    /// the free RAM on this device. Instead a connection only gets this
+    /// ceiling once its first line shows it is the upload, and only one
+    /// connection at a time may have it: a second upload while one is
+    /// arriving is held to the small ceiling and refused.
     ///
     /// Four MiB plus room for headers: the res partition is eight, and an
     /// image for it is compressed - the factory one is 2.8 MB.
@@ -81,10 +85,23 @@ public:
     bool running() const override { return listenFd_ >= 0; }
 
 private:
+    struct Connection {
+        int fd = -1;
+        std::string inbound;
+        std::string outbound;
+        std::size_t sent = 0;
+        std::uint64_t lastProgressMillis = 0;
+        /// Set once a response has been queued; the socket closes when it has
+        /// been written, rather than being kept alive for another request.
+        bool closing = false;
+    };
+
     /// How much this connection is allowed to accumulate. The larger figure
     /// applies only to an upload, and only while no other connection is
     /// already using it.
-    std::size_t ceilingFor(const std::string& inbound) const;
+    std::size_t ceilingFor(const Connection& connection) const;
+    static bool isUpload(const std::string& inbound) noexcept;
+    bool hasFreeSlot() const noexcept;
 
 public:
     int port() const override { return port_; }
@@ -100,16 +117,6 @@ public:
     std::uint32_t rejectedCount() const noexcept { return rejected_; }
 
 private:
-    struct Connection {
-        int fd = -1;
-        std::string inbound;
-        std::string outbound;
-        std::size_t sent = 0;
-        std::uint64_t lastProgressMillis = 0;
-        /// Set once a response has been queued; the socket closes when it has
-        /// been written, rather than being kept alive for another request.
-        bool closing = false;
-    };
 
     void acceptPending(std::uint64_t nowMillis);
     void service(Connection& connection, std::uint64_t nowMillis);
